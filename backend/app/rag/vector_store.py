@@ -18,19 +18,41 @@ class VectorStore:
         return cls._instance
 
     def _init_db(self):
-        logger.info(f"Connecting to persistent ChromaDB at: {settings.CHROMA_DIR}")
-        self.client = chromadb.PersistentClient(path=str(settings.CHROMA_DIR))
+        self._embedding_model = None
+        self._client = None
+        self._collection = None
         self.collection_name = "insightforge_research_docs"
-        
-        # Load SentenceTransformer embedding model
-        logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL_NAME}")
-        self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-        
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"description": "InsightForge AI multi-document research collection"}
-        )
-        logger.info(f"ChromaDB collection '{self.collection_name}' ready. Count: {self.collection.count()}")
+
+    @property
+    def client(self):
+        if self._client is None:
+            logger.info(f"Connecting to persistent ChromaDB at: {settings.CHROMA_DIR}")
+            self._client = chromadb.PersistentClient(path=str(settings.CHROMA_DIR))
+        return self._client
+
+    @property
+    def collection(self):
+        if self._collection is None:
+            self._collection = self.client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"description": "InsightForge AI multi-document research collection"}
+            )
+            logger.info(f"ChromaDB collection '{self.collection_name}' ready. Count: {self._collection.count()}")
+        return self._collection
+
+    @property
+    def embedding_model(self):
+        if self._embedding_model is None:
+            try:
+                import torch
+                torch.set_num_threads(1)
+                torch.set_num_interop_threads(1)
+            except Exception:
+                pass
+            logger.info(f"Loading embedding model on first use: {settings.EMBEDDING_MODEL_NAME}")
+            self._embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+            logger.info(f"Embedding model '{settings.EMBEDDING_MODEL_NAME}' loaded successfully.")
+        return self._embedding_model
 
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         if not chunks:

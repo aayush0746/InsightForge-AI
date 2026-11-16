@@ -639,8 +639,8 @@ export const AuthModal: React.FC = () => {
                       setErrorMessage(null);
                     }}
                     className={`flex-1 py-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${authMethod === 'otp'
-                        ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                       }`}
                   >
                     <KeyRound className="w-3.5 h-3.5" />
@@ -653,8 +653,8 @@ export const AuthModal: React.FC = () => {
                       setErrorMessage(null);
                     }}
                     className={`flex-1 py-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${authMethod === 'password'
-                        ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                       }`}
                   >
                     <Lock className="w-3.5 h-3.5" />

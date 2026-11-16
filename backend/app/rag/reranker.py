@@ -1,5 +1,5 @@
+import os
 from typing import List, Dict, Any, Optional
-from sentence_transformers import CrossEncoder
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 
@@ -18,13 +18,30 @@ class Reranker:
         return cls._instance
 
     def _init_model(self):
-        try:
-            logger.info(f"Loading CrossEncoder reranker: {settings.CROSS_ENCODER_MODEL_NAME}")
-            self.model = CrossEncoder(settings.CROSS_ENCODER_MODEL_NAME)
-            logger.info("CrossEncoder model loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load CrossEncoder: {e}")
-            self.model = None
+        self._model = None
+        self._loaded = False
+
+    @property
+    def model(self):
+        if not self._loaded:
+            self._loaded = True
+            # Check if cross encoder is disabled to conserve memory (essential for 512MB RAM free tier)
+            if os.environ.get("DISABLE_CROSS_ENCODER", "true").lower() in ("true", "1", "yes"):
+                logger.info("CrossEncoder reranker disabled via DISABLE_CROSS_ENCODER to conserve memory (512MB tier). Using hybrid rank fallback.")
+                self._model = None
+                return None
+            try:
+                import torch
+                torch.set_num_threads(1)
+                torch.set_num_interop_threads(1)
+                from sentence_transformers import CrossEncoder
+                logger.info(f"Loading CrossEncoder reranker on demand: {settings.CROSS_ENCODER_MODEL_NAME}")
+                self._model = CrossEncoder(settings.CROSS_ENCODER_MODEL_NAME)
+                logger.info("CrossEncoder model loaded successfully.")
+            except Exception as e:
+                logger.warning(f"Could not load CrossEncoder ({e}). Using hybrid rank fallback.")
+                self._model = None
+        return self._model
 
     def rerank(
         self,
