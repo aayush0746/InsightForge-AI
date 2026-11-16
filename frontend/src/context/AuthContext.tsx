@@ -16,6 +16,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
   verifyOtp: (payload: { email: string; otp: string; name?: string; password?: string }) => Promise<void>;
+  resetPassword: (payload: { email: string; otp: string; new_password: string }) => Promise<void>;
   signInWithGoogle: (payload: {
     email: string;
     name: string;
@@ -102,6 +103,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     handleAuthSuccess(res);
   };
 
+  const resetPassword = async (payload: { email: string; otp: string; new_password: string }) => {
+    const res = await api.resetPassword(payload);
+    handleAuthSuccess(res);
+  };
+
   const signInWithGoogle = async (payload: {
     email: string;
     name: string;
@@ -149,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signIn,
         signUp,
         verifyOtp,
+        resetPassword,
         signInWithGoogle,
         signOut,
       }}

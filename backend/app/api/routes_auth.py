@@ -9,6 +9,8 @@ from backend.app.schemas.auth import (
     GoogleAuthRequest,
     SendOtpRequest,
     VerifyOtpRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
     AuthResponse
 )
 from backend.app.services.auth_service import auth_service
@@ -108,14 +110,15 @@ async def google_auth(payload: GoogleAuthRequest, response: Response):
 @router.post("/signin", response_model=AuthResponse)
 async def signin(payload: UserLogin, response: Response):
     """
-    Email login endpoint:
+    Email & password login endpoint:
     - Finds existing user in PostgreSQL.
-    - If user doesn't exist, instructs to sign up first.
+    - Validates bcrypt password hash.
     - Sets secure HTTP-only session cookie.
     """
     try:
         user_obj, session_token = auth_service.signin_email_user(
-            email=payload.email
+            email=payload.email,
+            password=payload.password
         )
 
         max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
@@ -146,13 +149,14 @@ async def signin(payload: UserLogin, response: Response):
 async def signup(payload: UserCreate, response: Response):
     """
     Email signup endpoint:
-    - Registers user in PostgreSQL.
+    - Registers user in PostgreSQL with bcrypt password.
     - Sets secure HTTP-only session cookie.
     """
     try:
         user_obj, session_token = auth_service.signup_email_user(
             email=payload.email,
-            name=payload.name
+            name=payload.name,
+            password=payload.password
         )
 
         max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
@@ -178,6 +182,74 @@ async def signup(payload: UserCreate, response: Response):
     except Exception as e:
         logger.error(f"Sign up failed: {e}")
         raise HTTPException(status_code=500, detail=f"Sign up failed: {str(e)}")
+
+@router.post("/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest):
+    """
+    Sends a 6-digit password reset verification code to the registered email.
+    """
+    try:
+        clean_email = payload.email.lower().strip()
+        db = SessionLocal()
+        try:
+            user = db.query(UserModel).filter(UserModel.email == clean_email).first()
+            if not user:
+                raise ValueError("No account found with this email address. Please sign up first.")
+            user_name = user.full_name
+        finally:
+            db.close()
+
+        email_service.generate_and_send_otp(
+            email=clean_email,
+            name=user_name,
+            purpose="password_reset"
+        )
+        return {
+            "success": True,
+            "message": f"Password reset verification code sent to {clean_email}."
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to dispatch password reset OTP: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send password reset code: {str(e)}")
+
+@router.post("/reset-password", response_model=AuthResponse)
+async def reset_password(payload: ResetPasswordRequest, response: Response):
+    """
+    Verifies 6-digit OTP code and updates user's password with a new bcrypt hash.
+    Automatically issues a fresh session token and logs the user in.
+    """
+    try:
+        user_obj, session_token = auth_service.reset_password_with_otp(
+            email=payload.email,
+            otp=payload.otp,
+            new_password=payload.new_password
+        )
+
+        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
+        response.set_cookie(
+            key=settings.SESSION_COOKIE_NAME,
+            value=session_token,
+            max_age=max_age_seconds,
+            expires=max_age_seconds,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            path="/"
+        )
+
+        return AuthResponse(
+            success=True,
+            access_token=session_token,
+            user=user_obj,
+            message="Password reset successfully. You are now logged in."
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Password reset failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOtpRequest):

@@ -1,5 +1,6 @@
 import uuid
 import secrets
+import bcrypt
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple
 
@@ -156,9 +157,23 @@ class AuthService:
         finally:
             db.close()
 
-    def signin_email_user(self, email: str) -> Tuple[User, str]:
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Securely hashes a plaintext password using bcrypt with random salt."""
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+    @staticmethod
+    def verify_password(plain_password: str, hashed_password: str) -> bool:
+        """Verifies a plaintext password against a bcrypt hash."""
+        try:
+            return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        except Exception:
+            return False
+
+    def signin_email_user(self, email: str, password: Optional[str] = None) -> Tuple[User, str]:
         """
-        Signs in an existing email user. If user doesn't exist, raises ValueError.
+        Signs in an existing user with email and password verification.
         """
         db = SessionLocal()
         try:
@@ -166,6 +181,20 @@ class AuthService:
             user_record = db.query(UserModel).filter(UserModel.email == clean_email).first()
             if not user_record:
                 raise ValueError("No account found with this email. Please Sign Up first.")
+
+            # If user has a password set, verify it
+            if user_record.password_hash:
+                if not password:
+                    raise ValueError("Password is required for this account.")
+                if not self.verify_password(password, user_record.password_hash):
+                    raise ValueError("Incorrect password. Please check your credentials or use Forgot Password.")
+            else:
+                # User signed up via Google or OTP without password
+                if password:
+                    raise ValueError(
+                        f"This account was registered via {user_record.auth_provider.upper()}. "
+                        "Please sign in with Google or Email OTP, or use 'Forgot Password' to set a new password."
+                    )
 
             now = datetime.now(timezone.utc)
             user_record.updated_at = now
@@ -192,9 +221,9 @@ class AuthService:
         finally:
             db.close()
 
-    def signup_email_user(self, email: str, name: Optional[str] = None) -> Tuple[User, str]:
+    def signup_email_user(self, email: str, name: Optional[str] = None, password: Optional[str] = None) -> Tuple[User, str]:
         """
-        Registers a new email user in PostgreSQL users table and creates session.
+        Registers a new email user in PostgreSQL users table with optional bcrypt password hashing.
         """
         db = SessionLocal()
         try:
@@ -203,12 +232,15 @@ class AuthService:
             now = datetime.now(timezone.utc)
 
             user_record = db.query(UserModel).filter(UserModel.email == clean_email).first()
+            password_hash = self.hash_password(password) if password else None
+
             if not user_record:
                 new_uid = f"usr_{uuid.uuid4().hex[:12]}"
                 user_record = UserModel(
                     id=new_uid,
                     full_name=clean_name,
                     email=clean_email,
+                    password_hash=password_hash,
                     auth_provider="email",
                     created_at=now,
                     updated_at=now
@@ -219,6 +251,8 @@ class AuthService:
                 user_record.updated_at = now
                 if clean_name and (not user_record.full_name or user_record.full_name.startswith("User")):
                     user_record.full_name = clean_name
+                if password_hash:
+                    user_record.password_hash = password_hash
 
             db.commit()
             db.refresh(user_record)
@@ -243,17 +277,59 @@ class AuthService:
         finally:
             db.close()
 
+    def reset_password_with_otp(self, email: str, otp: str, new_password: str) -> Tuple[User, str]:
+        """
+        Validates the 6-digit OTP code and updates the user's password with a new bcrypt hash.
+        Issues a fresh session token so the user is logged in immediately.
+        """
+        from backend.app.services.email_service import email_service
+        clean_email = email.lower().strip()
+        email_service.verify_otp(email=clean_email, user_otp=otp)
+
+        db = SessionLocal()
+        try:
+            user_record = db.query(UserModel).filter(UserModel.email == clean_email).first()
+            if not user_record:
+                raise ValueError("No account found with this email.")
+
+            now = datetime.now(timezone.utc)
+            user_record.password_hash = self.hash_password(new_password)
+            user_record.updated_at = now
+            db.commit()
+            db.refresh(user_record)
+
+            session_token = secrets.token_urlsafe(48)
+            expires_at = now + timedelta(days=settings.SESSION_EXPIRE_DAYS)
+
+            session_record = UserSessionModel(
+                token=session_token,
+                user_id=user_record.id,
+                created_at=now,
+                expires_at=expires_at
+            )
+            db.add(session_record)
+            db.commit()
+
+            logger.info(f"Password reset successfully for user: {clean_email} ({user_record.id})")
+            return User(**user_record.to_dict()), session_token
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error resetting password: {e}")
+            raise
+        finally:
+            db.close()
+
     def authenticate_or_create_email_user(self, email: str, name: Optional[str] = None) -> Tuple[User, str]:
         """Legacy compatibility alias"""
         return self.signup_email_user(email=email, name=name)
 
-    def verify_otp_and_register_user(self, email: str, otp: str, name: Optional[str] = None) -> Tuple[User, str]:
+    def verify_otp_and_register_user(self, email: str, otp: str, name: Optional[str] = None, password: Optional[str] = None) -> Tuple[User, str]:
         """
         Validates OTP code and registers the verified user in PostgreSQL.
         """
         from backend.app.services.email_service import email_service
         email_service.verify_otp(email=email, user_otp=otp)
-        return self.signup_email_user(email=email, name=name)
+        return self.signup_email_user(email=email, name=name, password=password)
 
     def get_user_by_session_token(self, token: str) -> Optional[User]:
         """

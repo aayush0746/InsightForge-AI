@@ -63,6 +63,20 @@ def init_db():
         Base.metadata.create_all(bind=engine)
         logger.info(f"Database tables initialized successfully ({DB_DIALECT}).")
 
+        # Automatically ensure password_hash column exists on users table
+        try:
+            with engine.connect() as conn:
+                if DB_DIALECT == "postgresql":
+                    conn.execute(text("ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
+                else:
+                    try:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);"))
+                    except Exception:
+                        pass
+                conn.commit()
+        except Exception as col_err:
+            logger.warning(f"Notice on ensuring password_hash column: {col_err}")
+
         # Automatically enable Row Level Security & lockdown public PostgREST access on PostgreSQL (Supabase Best Practice)
         if DB_DIALECT == "postgresql":
             with engine.connect() as conn:

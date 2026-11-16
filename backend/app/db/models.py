@@ -14,6 +14,7 @@ class UserModel(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     full_name = Column(String(120), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=True)
     google_id = Column(String(255), unique=True, nullable=True, index=True)
     profile_picture = Column(Text, nullable=True)
     auth_provider = Column(String(50), default="google", nullable=False)
