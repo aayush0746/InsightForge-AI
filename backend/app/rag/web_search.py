@@ -1,5 +1,11 @@
 from typing import List, Dict, Any, Tuple
-from ddgs import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        DDGS = None
 from backend.app.core.logger import logger
 from backend.app.schemas.chat import Citation
 
@@ -10,6 +16,9 @@ class LiveWebSearch:
     """
     @staticmethod
     def search(query: str, max_results: int = 4) -> Tuple[str, List[Citation]]:
+        if not DDGS:
+            logger.warning("DuckDuckGo Search library not available.")
+            return "", []
         logger.info(f"Conducting live web search for: '{query}' (limit: {max_results})")
         web_context_blocks = []
         citations = []
