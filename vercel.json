@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://insightforge-backend.onrender.com/api/$1"
+      "destination": "https://insightforge-backend-99g3.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
