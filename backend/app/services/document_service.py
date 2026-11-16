@@ -26,7 +26,8 @@ class DocumentService:
     """
 
     def __init__(self):
-        self._sync_existing_folder()
+        # Avoid synchronous heavy document chunking and embedding during boot
+        pass
 
     def _sync_existing_folder(self):
         """

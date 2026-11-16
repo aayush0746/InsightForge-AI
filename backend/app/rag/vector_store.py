@@ -73,9 +73,9 @@ class VectorStore:
             for c in chunks
         ]
 
-        # Compute embeddings
+        # Compute embeddings with batching to avoid RAM spikes
         logger.info(f"Computing embeddings for {len(texts)} chunks...")
-        embeddings = self.embedding_model.encode(texts, convert_to_tensor=False).tolist()
+        embeddings = self.embedding_model.encode(texts, batch_size=16, show_progress_bar=False, convert_to_tensor=False).tolist()
 
         # Add to ChromaDB
         self.collection.add(
@@ -184,7 +184,9 @@ class VectorStore:
         return chunks
 
     def count(self) -> int:
-        return self.collection.count()
+        if self._collection is None:
+            return 0
+        return self._collection.count()
 
 vector_store = VectorStore()
 

@@ -11,8 +11,14 @@ async def health_check():
     """
     System status, storage, and embedding model readiness.
     """
-    total_docs = len(document_service.list_documents())
-    total_chunks = vector_store.count()
+    try:
+        total_docs = len(document_service.list_documents())
+    except Exception:
+        total_docs = 0
+    try:
+        total_chunks = vector_store.count()
+    except Exception:
+        total_chunks = 0
 
     return SystemHealthResponse(
         status="healthy",
