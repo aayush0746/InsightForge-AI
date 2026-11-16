@@ -127,8 +127,6 @@ class AuthService:
                 db.commit()
                 db.refresh(user_record)
                 logger.info(f"Registered new user via Google SSO: {clean_email} ({new_uid})")
-                db.add(user_record)
-                logger.info(f"New user registered in PostgreSQL via Google Sign Up: {clean_email} ({new_uid})")
 
             db.commit()
             db.refresh(user_record)

@@ -76,7 +76,8 @@ export const AuthModal: React.FC = () => {
 
   // 'form' = Main Single "Continue with Google" view; 'google_chooser' = Choose Google Account; 'google_custom' = Enter custom Gmail; 'otp_verify' = Enter OTP
   const [modalView, setModalView] = useState<'form' | 'google_chooser' | 'google_custom' | 'otp_verify'>('form');
-  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(true);
+  const [authMethod, setAuthMethod] = useState<'otp' | 'password'>('otp');
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -228,7 +229,41 @@ export const AuthModal: React.FC = () => {
     setModalView('google_chooser');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setInfoMessage(null);
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setErrorMessage('Please enter your email address.');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const res = await api.sendOtp({
+        email: cleanEmail,
+        name: name.trim() || undefined,
+        purpose: authModalMode === 'signup' ? 'signup' : 'login'
+      });
+      setOtpPendingData({
+        name: name.trim() || cleanEmail.split('@')[0],
+        email: cleanEmail,
+      });
+      setOtpSentToEmail(cleanEmail);
+      setInfoMessage(res.message);
+      setOtp('');
+      setOtpCountdown(30);
+      setModalView('otp_verify');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to send verification code.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setInfoMessage(null);
@@ -253,23 +288,9 @@ export const AuthModal: React.FC = () => {
 
       try {
         setIsLoading(true);
-        const res = await api.sendOtp({
-          email: email.trim().toLowerCase(),
-          name: name.trim(),
-          purpose: 'signup'
-        });
-        setOtpPendingData({
-          name: name.trim(),
-          email: email.trim().toLowerCase(),
-          password
-        });
-        setOtpSentToEmail(email.trim().toLowerCase());
-        setInfoMessage(res.message);
-        setOtp('');
-        setOtpCountdown(30);
-        setModalView('otp_verify');
+        await signUp(name.trim(), email.trim().toLowerCase(), password);
       } catch (err: any) {
-        setErrorMessage(err.message || 'Failed to send verification code.');
+        setErrorMessage(err.message || 'Account registration failed.');
       } finally {
         setIsLoading(false);
       }
@@ -278,12 +299,19 @@ export const AuthModal: React.FC = () => {
 
     try {
       setIsLoading(true);
-      await signIn(email, password);
+      await signIn(email.trim().toLowerCase(), password);
     } catch (err: any) {
       setErrorMessage(err.message || 'Authentication failed. Please check your credentials.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    if (authMethod === 'otp') {
+      return handleSendOtp(e);
+    }
+    return handlePasswordSubmit(e);
   };
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
@@ -521,19 +549,116 @@ export const AuthModal: React.FC = () => {
                 </div>
               )}
 
-              {/* Optional Email Collapsible */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowEmailForm(!showEmailForm)}
-                  className="w-full flex items-center justify-center gap-2 text-xs font-medium text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition"
-                >
-                  <span>{showEmailForm ? 'Hide email options' : 'Or continue with email address'}</span>
-                  <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${showEmailForm ? 'rotate-90' : ''}`} />
-                </button>
+              {/* Divider */}
+              <div className="relative flex items-center justify-center my-2">
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full"></div>
+                <span className="bg-white dark:bg-slate-900 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Or continue with email
+                </span>
+              </div>
 
-                {showEmailForm && (
-                  <form onSubmit={handleSubmit} className="mt-4 space-y-3.5 animate-in fade-in duration-150">
+              {/* Email Authentication Options */}
+              <div className="space-y-3">
+                {/* Method Switcher: Instant OTP vs Password */}
+                <div className="flex p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMethod('otp');
+                      setErrorMessage(null);
+                    }}
+                    className={`flex-1 py-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${
+                      authMethod === 'otp'
+                        ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Instant Email OTP</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMethod('password');
+                      setErrorMessage(null);
+                    }}
+                    className={`flex-1 py-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${
+                      authMethod === 'password'
+                        ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Password</span>
+                  </button>
+                </div>
+
+                {/* OTP Mode Form */}
+                {authMethod === 'otp' && (
+                  <form onSubmit={handleSendOtp} className="space-y-3 animate-in fade-in duration-150">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      We'll send a 6-digit verification code to your email. No password needed!
+                    </p>
+
+                    {authModalMode === 'signup' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Full Name
+                        </label>
+                        <div className="relative">
+                          <UserIcon className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="e.g. Dr. Jane Watson"
+                            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Email Address
+                      </label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="name@company.com"
+                          required
+                          className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading || !email.trim()}
+                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Dispatching 6-digit code...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>Send 6-Digit Login Code</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </>
+                      )}
+                    </button>
+                  </form>
+                )}
+
+                {/* Password Mode Form */}
+                {authMethod === 'password' && (
+                  <form onSubmit={handlePasswordSubmit} className="space-y-3 animate-in fade-in duration-150">
                     {authModalMode === 'signup' && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -627,7 +752,7 @@ export const AuthModal: React.FC = () => {
                         </>
                       ) : (
                         <>
-                          <span>{authModalMode === 'signin' ? 'Sign In with Email' : 'Create Email Account'}</span>
+                          <span>{authModalMode === 'signin' ? 'Sign In with Password' : 'Create Account'}</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </>
                       )}

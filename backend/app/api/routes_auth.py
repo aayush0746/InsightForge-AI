@@ -182,24 +182,17 @@ async def signup(payload: UserCreate, response: Response):
 @router.post("/send-otp")
 async def send_otp(payload: SendOtpRequest):
     """
-    Sends a 6-digit OTP to the user's email for verification before account creation.
+    Sends a 6-digit OTP to the user's email for verification & passwordless login.
+    Supports both login and signup workflows seamlessly.
     """
     try:
         clean_email = payload.email.lower().strip()
-        # If signup purpose, verify account doesn't already exist
-        if payload.purpose == "signup":
-            db = SessionLocal()
-            try:
-                existing = db.query(UserModel).filter(UserModel.email == clean_email).first()
-                if existing:
-                    raise ValueError(f"An account with {clean_email} already exists. Please Sign In.")
-            finally:
-                db.close()
+        purpose = (payload.purpose or "login").lower().strip()
 
         result = email_service.generate_and_send_otp(
             email=clean_email,
             name=payload.name,
-            purpose=payload.purpose or "signup"
+            purpose=purpose
         )
         return result
     except ValueError as e:
