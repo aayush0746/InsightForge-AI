@@ -419,7 +419,7 @@ export const Projects: React.FC = () => {
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
               <span>
-                <strong>Temporary Guest Session:</strong> Conversations exist only for this visit and will be deleted when you leave.
+                <strong>Temporary Guest Session:</strong> Conversations exist only for this visit and will be deleted permanently when you leave.
               </span>
             </div>
             <div className="flex items-center gap-2">
