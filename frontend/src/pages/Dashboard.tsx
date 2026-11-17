@@ -60,7 +60,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
             Welcome to InsightForge AI
           </h2>
           <p className="text-indigo-100/90 text-sm leading-relaxed mb-6 font-normal">
-            Upload PDFs, execute multi-agent deep research, rerank findings with neural CrossEncoders,
+            Upload PDFs, execute multi-agent deep research, analyze, rerank findings with neural CrossEncoders,
             and inspect fully grounded reports with verified page-level citations.
           </p>
           <div className="flex flex-wrap gap-3">
