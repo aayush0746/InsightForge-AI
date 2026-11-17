@@ -55,12 +55,19 @@ class Reranker:
         if not chunks:
             return []
 
-        if len(chunks) <= top_n and not self.model:
-            return chunks
-
         if not self.model:
-            logger.warning("CrossEncoder not available, sorting by initial retrieval score.")
-            return sorted(chunks, key=lambda x: x.get("score", 0.0), reverse=True)[:top_n]
+            import re
+            logger.info("CrossEncoder not active. Using smart term overlap & retrieval score fallback.")
+            stops = {"the", "is", "a", "an", "and", "or", "in", "on", "for", "of", "to", "at", "by", "what", "are"}
+            q_words = {w.rstrip("s") for w in re.findall(r"\w+", query.lower()) if w not in stops}
+
+            def fallback_score(c):
+                existing_score = float(c.get("score", 0.0))
+                c_words = {w.rstrip("s") for w in re.findall(r"\w+", c.get("text", "").lower())}
+                overlap = len(q_words.intersection(c_words))
+                return (existing_score, overlap)
+
+            return sorted(chunks, key=fallback_score, reverse=True)[:top_n]
 
         # Prepare pairs: [(query, chunk_text), ...]
         pairs = [(query, chunk["text"]) for chunk in chunks]
