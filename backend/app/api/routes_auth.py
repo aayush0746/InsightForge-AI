@@ -102,10 +102,11 @@ async def google_auth(payload: GoogleAuthRequest, response: Response):
             message="Google authentication successful."
         )
     except ValueError as e:
+        logger.warning(f"Google auth client error: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Google authentication failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Authentication failed: {str(e)}")
+        logger.exception(f"Google authentication unexpected failure: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Google authentication failed: {str(e)}")
 
 @router.post("/signin", response_model=AuthResponse)
 async def signin(payload: UserLogin, response: Response):

@@ -1,6 +1,8 @@
 import uuid
 import secrets
 import bcrypt
+import json
+import base64
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple
 
@@ -29,10 +31,10 @@ class AuthService:
         """
         Securely verifies Google OAuth 2.0 ID token using google-auth with resilient payload fallback.
         """
+        client_id = settings.GOOGLE_CLIENT_ID.strip() if settings.GOOGLE_CLIENT_ID else None
         try:
             req = google_requests.Request()
-            client_id = settings.GOOGLE_CLIENT_ID if settings.GOOGLE_CLIENT_ID else None
-            idinfo = id_token.verify_oauth2_token(token_str, req, client_id)
+            idinfo = id_token.verify_oauth2_token(token_str, req, client_id, clock_skew_in_seconds=15)
             if idinfo.get("iss") not in ["accounts.google.com", "https://accounts.google.com"]:
                 raise ValueError("Invalid Google token issuer.")
             return idinfo
@@ -40,7 +42,6 @@ class AuthService:
             logger.warning(f"Google ID token signature verification notice: {e}")
             # Resilient JWT payload extraction fallback
             try:
-                import base64
                 parts = token_str.split(".")
                 if len(parts) >= 2:
                     payload_b64 = parts[1]
