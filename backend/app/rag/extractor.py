@@ -194,7 +194,10 @@ class DocumentExtractor:
 
                 # Add sample markdown table of top rows
                 summary_lines.append("\n**Sample Records:**")
-                summary_lines.append(df.head(10).to_markdown(index=False))
+                try:
+                    summary_lines.append(df.head(10).to_markdown(index=False))
+                except Exception:
+                    summary_lines.append(df.head(10).to_string(index=False))
 
                 pages.append({
                     "page": page_counter,
@@ -206,9 +209,13 @@ class DocumentExtractor:
                 if len(df) > 10:
                     for chunk_idx in range(10, min(200, len(df)), 40):
                         batch = df.iloc[chunk_idx:chunk_idx + 40]
+                        try:
+                            batch_str = batch.to_markdown(index=False)
+                        except Exception:
+                            batch_str = batch.to_string(index=False)
                         pages.append({
                             "page": page_counter,
-                            "text": f"### {sheet_name} (Rows {chunk_idx + 1} to {chunk_idx + len(batch)}):\n" + batch.to_markdown(index=False)
+                            "text": f"### {sheet_name} (Rows {chunk_idx + 1} to {chunk_idx + len(batch)}):\n" + batch_str
                         })
                         page_counter += 1
 
