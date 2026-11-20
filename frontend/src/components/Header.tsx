@@ -35,7 +35,41 @@ export const Header: React.FC<HeaderProps> = ({
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [showAuthMenu, setShowAuthMenu] = useState(false);
+  const [isMenuPinned, setIsMenuPinned] = useState(false);
   const authMenuRef = useRef<HTMLDivElement>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setShowAuthMenu(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (isMenuPinned) return;
+    hoverTimeoutRef.current = setTimeout(() => {
+      setShowAuthMenu(false);
+    }, 250);
+  };
+
+  const handleToggleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (showAuthMenu && isMenuPinned) {
+      setIsMenuPinned(false);
+      setShowAuthMenu(false);
+    } else {
+      setIsMenuPinned(true);
+      setShowAuthMenu(true);
+    }
+  };
+
+  const handleActionClick = (mode: 'signin' | 'signup') => {
+    setIsMenuPinned(false);
+    setShowAuthMenu(false);
+    openAuthModal(mode);
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -43,11 +77,15 @@ export const Header: React.FC<HeaderProps> = ({
         setShowDropdown(false);
       }
       if (authMenuRef.current && !authMenuRef.current.contains(event.target as Node)) {
+        setIsMenuPinned(false);
         setShowAuthMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
   }, []);
 
   return (
@@ -155,49 +193,53 @@ export const Header: React.FC<HeaderProps> = ({
           <div
             className="relative"
             ref={authMenuRef}
-            onMouseEnter={() => setShowAuthMenu(true)}
-            onMouseLeave={() => setShowAuthMenu(false)}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
           >
             <button
-              onClick={() => setShowAuthMenu(!showAuthMenu)}
+              onClick={handleToggleClick}
               aria-label="Account Access"
-              className="flex items-center gap-1.5 p-1.5 pr-2.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-slate-700 dark:text-slate-200 shadow-xs"
+              className={`flex items-center gap-1.5 p-1.5 pr-2.5 rounded-full border transition cursor-pointer text-slate-700 dark:text-slate-200 shadow-xs ${
+                showAuthMenu
+                  ? 'border-indigo-400 dark:border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 ring-2 ring-indigo-500/20'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
             >
               <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
                 <UserIcon className="w-3.5 h-3.5" />
               </div>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${showAuthMenu ? 'rotate-180' : ''}`} />
             </button>
 
-            {/* Auth Dropdown Popup */}
+            {/* Auth Dropdown Popup with seamless hover bridge (pt-2) */}
             {showAuthMenu && (
-              <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1.5">
-                  <p className="font-bold text-xs text-slate-900 dark:text-slate-100">Account</p>
-                  <p className="text-[11px] text-slate-400">Sign in to save documents & chats</p>
-                </div>
+              <div
+                className="absolute right-0 top-full pt-2 z-50"
+                onMouseEnter={handleMouseEnter}
+                onMouseLeave={handleMouseLeave}
+              >
+                <div className="w-56 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-2.5 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1.5">
+                    <p className="font-bold text-xs text-slate-900 dark:text-slate-100">Account</p>
+                    <p className="text-[11px] text-slate-400">Sign in to save documents & chats</p>
+                  </div>
 
-                <div className="space-y-1">
-                  <button
-                    onClick={() => {
-                      setShowAuthMenu(false);
-                      openAuthModal('signin');
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-left"
-                  >
-                    <LogIn className="w-4 h-4 text-indigo-500" />
-                    <span>Sign In</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowAuthMenu(false);
-                      openAuthModal('signup');
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs shadow-indigo-600/20 transition cursor-pointer text-left"
-                  >
-                    <UserPlus className="w-4 h-4" />
-                    <span>Sign Up</span>
-                  </button>
+                  <div className="space-y-1">
+                    <button
+                      onClick={() => handleActionClick('signin')}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-left"
+                    >
+                      <LogIn className="w-4 h-4 text-indigo-500" />
+                      <span>Sign In</span>
+                    </button>
+                    <button
+                      onClick={() => handleActionClick('signup')}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs shadow-indigo-600/20 transition cursor-pointer text-left"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      <span>Sign Up</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
