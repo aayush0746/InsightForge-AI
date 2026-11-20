@@ -184,11 +184,22 @@ async def delete_document(
     return {"success": True, "message": f"Document '{document_id}' deleted successfully."}
 
 @router.post("/compare")
-async def compare_documents(request: DocumentCompareRequest):
+async def compare_documents(
+    request: DocumentCompareRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
     """
     Perform deep AI comparison matrix between two uploaded documents.
     """
     try:
+        user_id = current_user.id if current_user else None
+        doc1 = document_service.get_document(request.doc_id_1, user_id=user_id)
+        doc2 = document_service.get_document(request.doc_id_2, user_id=user_id)
+        if not doc1 or not doc2:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="One or both documents not found or access denied."
+            )
         comparison = document_service.compare_documents(request.doc_id_1, request.doc_id_2)
         return {"success": True, "data": comparison}
     except Exception as e:

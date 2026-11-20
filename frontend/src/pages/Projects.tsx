@@ -414,32 +414,7 @@ export const Projects: React.FC = () => {
               Multi-Turn Memory Saved
             </span>
           </div>
-        ) : (
-          <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-700 dark:text-amber-300">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>
-                <strong>Temporary Guest Session:</strong> Conversations exist only for this visit and will be deleted permanently when you leave.
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleClearGuestSession}
-                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-100 font-semibold text-[11px] transition cursor-pointer"
-              >
-                Clear Temporary Data
-              </button>
-              <button
-                type="button"
-                onClick={() => openAuthModal('signup')}
-                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[11px] transition shadow-xs cursor-pointer"
-              >
-                Sign Up to Save Permanently
-              </button>
-            </div>
-          </div>
-        )}
+        ) : null}
 
         {/* Isolation Banner */}
         <div className="px-6 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/30 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">

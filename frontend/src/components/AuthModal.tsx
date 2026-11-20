@@ -261,7 +261,7 @@ export const AuthModal: React.FC = () => {
         email: cleanEmail,
       });
       setOtpSentToEmail(cleanEmail);
-      setInfoMessage(res.message);
+      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Verification code sent to your email.');
       setOtp('');
       setOtpCountdown(30);
       setModalView('otp_verify');
@@ -337,7 +337,7 @@ export const AuthModal: React.FC = () => {
       setIsLoading(true);
       const res = await api.forgotPassword({ email: cleanEmail });
       setForgotEmail(cleanEmail);
-      setInfoMessage(res.message);
+      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Password reset code sent to your email.');
       setForgotStep('reset');
       setForgotOtp('');
       setNewPassword('');
@@ -424,7 +424,7 @@ export const AuthModal: React.FC = () => {
         email: otpPendingData.email,
         name: otpPendingData.name
       });
-      setInfoMessage(res.message);
+      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Verification code sent to your email.');
       setOtpCountdown(30);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to resend verification code.');

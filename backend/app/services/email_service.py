@@ -59,7 +59,8 @@ class EmailService:
         )
 
         smtp_delivered = False
-        # Send real verification email via SMTP if configured
+        smtp_error_detail = None
+        # Send real verification email via SMTP
         if settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD:
             try:
                 self._send_smtp_email(
@@ -69,14 +70,22 @@ class EmailService:
                 )
                 smtp_delivered = True
             except Exception as e:
-                logger.warning(f"SMTP dispatch to {clean_email} encountered issue: {e}. Falling back to console OTP.")
+                smtp_error_detail = str(e)
+                logger.error(f"SMTP dispatch to {clean_email} failed: {e}")
         else:
-            logger.info(f"[InsightForge Auth] SMTP not configured. OTP displayed in server terminal: {otp_code}")
+            logger.warning(f"[InsightForge Auth] SMTP credentials not set. Host: '{settings.SMTP_HOST}', User: '{settings.SMTP_USER}'")
+
+        if not smtp_delivered:
+            logger.error(f"Failed to send email to {clean_email}. Detail: {smtp_error_detail}")
+            raise ValueError(
+                f"Could not send verification email to {clean_email}. "
+                "Please verify your email address or check back in a moment."
+            )
 
         return {
             "success": True,
-            "message": f"Verification code has been sent to {clean_email}." if smtp_delivered else f"Verification code generated for {clean_email} (Code: {otp_code})",
-            "smtp_delivered": smtp_delivered
+            "message": f"A 6-digit verification code has been sent to {clean_email}. Please check your inbox.",
+            "smtp_delivered": True
         }
 
     def verify_otp(self, email: str, user_otp: str) -> bool:
@@ -164,13 +173,14 @@ class EmailService:
         msg.attach(MIMEText(html_content, "html"))
 
         # Connect to SMTP server
+        smtp_password = settings.SMTP_PASSWORD.replace(" ", "") if settings.SMTP_PASSWORD else ""
         if settings.SMTP_PORT == 465:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
         else:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
             server.starttls()
 
-        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.login(settings.SMTP_USER, smtp_password)
         server.send_message(msg)
         server.quit()
         logger.info(f"Successfully sent OTP email to {to_email} via SMTP.")

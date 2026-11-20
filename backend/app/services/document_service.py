@@ -189,11 +189,11 @@ class DocumentService:
         docs_map: Dict[str, DocumentMetadata] = {}
 
         if user_id:
-            # 1. Fetch from Supabase Cloud PostgreSQL
+            # 1. Fetch from Supabase Cloud PostgreSQL strictly for this user
             try:
                 with SessionLocal() as db:
                     cloud_rows = db.query(UserDocumentModel).filter(
-                        (UserDocumentModel.user_id == user_id) | (UserDocumentModel.user_id == None)
+                        UserDocumentModel.user_id == user_id
                     ).all()
 
                     for r in cloud_rows:
@@ -230,15 +230,15 @@ class DocumentService:
             except Exception as e:
                 logger.error(f"Error querying cloud documents from PostgreSQL: {e}")
 
-            # 2. Add local metadata documents for this user (or shared templates)
+            # 2. Add local metadata documents strictly for this user
             all_meta = self._load_metadata()
             for v in all_meta.values():
                 d = DocumentMetadata(**v)
-                if d.user_id == user_id or d.user_id is None:
+                if d.user_id == user_id:
                     if d.document_id not in docs_map:
                         docs_map[d.document_id] = d
         else:
-            # Guests ONLY see shared demo/template documents (user_id is None)
+            # Guests ONLY see documents with user_id is None
             all_meta = self._load_metadata()
             for v in all_meta.values():
                 d = DocumentMetadata(**v)
@@ -262,10 +262,12 @@ class DocumentService:
             with SessionLocal() as db:
                 row = db.query(UserDocumentModel).filter(UserDocumentModel.id == document_id).first()
                 if row:
-                    if row.user_id and user_id and row.user_id != user_id:
-                        return None
-                    if row.user_id and not user_id:
-                        return None
+                    if user_id:
+                        if row.user_id != user_id:
+                            return None
+                    else:
+                        if row.user_id is not None:
+                            return None
                     return DocumentMetadata(
                         document_id=row.id,
                         filename=row.filename,
@@ -284,10 +286,12 @@ class DocumentService:
         if not data:
             return None
         doc = DocumentMetadata(**data)
-        if doc.user_id and user_id and doc.user_id != user_id:
-            return None
-        if doc.user_id and not user_id:
-            return None
+        if user_id:
+            if doc.user_id != user_id:
+                return None
+        else:
+            if doc.user_id is not None:
+                return None
         return doc
 
     def get_document_file_path(self, document_id: str, user_id: Optional[str] = None) -> Optional[Path]:
@@ -341,9 +345,14 @@ class DocumentService:
             with SessionLocal() as db:
                 row = db.query(UserDocumentModel).filter(UserDocumentModel.id == document_id).first()
                 if row:
-                    if row.user_id and user_id and row.user_id != user_id:
-                        logger.warning(f"Unauthorized delete attempt for {document_id} by user {user_id}")
-                        return False
+                    if user_id:
+                        if row.user_id != user_id:
+                            logger.warning(f"Unauthorized delete attempt for {document_id} by user {user_id}")
+                            return False
+                    else:
+                        if row.user_id is not None:
+                            logger.warning(f"Unauthorized guest delete attempt for user document {document_id}")
+                            return False
                     db.delete(row)
                     db.commit()
                     deleted_from_cloud = True
@@ -356,9 +365,14 @@ class DocumentService:
         if document_id in all_meta:
             meta = all_meta[document_id]
             doc_uid = meta.get("user_id")
-            if doc_uid and user_id and doc_uid != user_id:
-                logger.warning(f"Unauthorized delete attempt for {document_id} by user {user_id}")
-                return False
+            if user_id:
+                if doc_uid != user_id:
+                    logger.warning(f"Unauthorized delete attempt for {document_id} by user {user_id}")
+                    return False
+            else:
+                if doc_uid is not None:
+                    logger.warning(f"Unauthorized guest delete attempt for user document {document_id}")
+                    return False
             del all_meta[document_id]
             self._save_metadata(all_meta)
 

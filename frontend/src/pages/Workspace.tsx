@@ -280,34 +280,7 @@ export const Workspace: React.FC = () => {
             </button>
           )}
         </div>
-      ) : (
-        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-wrap items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-            <span>
-              <strong>Temporary Guest Session:</strong> You are exploring in guest mode. Messages and questions exist only for this visit and will not be saved permanently.
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            {chatHistory.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClearChat}
-                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-100 font-semibold text-[11px] transition cursor-pointer"
-              >
-                Clear Temporary Chat
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => openAuthModal('signup')}
-              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-[11px] transition shadow-xs cursor-pointer"
-            >
-              Sign Up to Save Permanently
-            </button>
-          </div>
-        </div>
-      )}
+      ) : null}
 
       {/* Search & Query Bar Card */}
       <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">

@@ -36,10 +36,12 @@ class ResearchService:
         report = agent_orchestrator.get_report(research_id)
         if not report:
             return None
-        if report.user_id and user_id and report.user_id != user_id:
-            return None
-        if report.user_id and not user_id:
-            return None
+        if user_id:
+            if report.user_id != user_id:
+                return None
+        else:
+            if report.user_id is not None:
+                return None
         return report
 
     def list_reports(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -48,10 +50,9 @@ class ResearchService:
         for rid, item in raw_reports.items():
             rep_uid = item.get("user_id")
             if user_id:
-                if rep_uid and rep_uid != user_id:
+                if rep_uid != user_id:
                     continue
             else:
-                # Guests only see shared sample reports (user_id is None)
                 if rep_uid is not None:
                     continue
 

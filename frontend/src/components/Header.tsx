@@ -8,7 +8,8 @@ import {
   User as UserIcon,
   ChevronDown,
   Shield,
-  LogIn
+  LogIn,
+  UserPlus
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { GoogleIcon } from './AuthModal';
@@ -33,11 +34,16 @@ export const Header: React.FC<HeaderProps> = ({
   const { user, isAuthenticated, openAuthModal, signOut } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [showAuthMenu, setShowAuthMenu] = useState(false);
+  const authMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowDropdown(false);
+      }
+      if (authMenuRef.current && !authMenuRef.current.contains(event.target as Node)) {
+        setShowAuthMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -146,24 +152,55 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 text-amber-700 dark:text-amber-300 text-[11px] font-medium" title="Temporary Guest Mode: Data will not be saved permanently">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-              <span>Guest Session</span>
-            </div>
+          <div
+            className="relative"
+            ref={authMenuRef}
+            onMouseEnter={() => setShowAuthMenu(true)}
+            onMouseLeave={() => setShowAuthMenu(false)}
+          >
             <button
-              onClick={() => openAuthModal('signin')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
+              onClick={() => setShowAuthMenu(!showAuthMenu)}
+              aria-label="Account Access"
+              className="flex items-center gap-1.5 p-1.5 pr-2.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-slate-700 dark:text-slate-200 shadow-xs"
             >
-              <GoogleIcon className="w-3.5 h-3.5" />
-              <span>Sign In</span>
+              <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                <UserIcon className="w-3.5 h-3.5" />
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
             </button>
-            <button
-              onClick={() => openAuthModal('signup')}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs shadow-indigo-600/20 transition cursor-pointer"
-            >
-              <span>Sign Up</span>
-            </button>
+
+            {/* Auth Dropdown Popup */}
+            {showAuthMenu && (
+              <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1.5">
+                  <p className="font-bold text-xs text-slate-900 dark:text-slate-100">Account</p>
+                  <p className="text-[11px] text-slate-400">Sign in to save documents & chats</p>
+                </div>
+
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setShowAuthMenu(false);
+                      openAuthModal('signin');
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-left"
+                  >
+                    <LogIn className="w-4 h-4 text-indigo-500" />
+                    <span>Sign In</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAuthMenu(false);
+                      openAuthModal('signup');
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs shadow-indigo-600/20 transition cursor-pointer text-left"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Sign Up</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

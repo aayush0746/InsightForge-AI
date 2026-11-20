@@ -48,11 +48,11 @@ class Settings(BaseSettings):
     SESSION_EXPIRE_DAYS: int = 14
     
     # SMTP / Email Configuration for OTP Verification
-    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USER: str = os.getenv("SMTP_USER", "")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "")
+    SMTP_USER: str = os.getenv("SMTP_USER", "aayushkumar0746@gmail.com")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "qzzx fceh dqgl bwzs")
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "aayushkumar0746@gmail.com")
     SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "InsightForge AI")
     
     # Storage Directories
