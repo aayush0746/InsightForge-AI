@@ -1,12 +1,14 @@
+import threading
 from typing import List, Dict, Any, Optional
 import chromadb
 from sentence_transformers import SentenceTransformer
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 
+
 class VectorStore:
     """
-    Persistent Vector Database built on ChromaDB with Sentence Transformers.
+    Thread-safe persistent Vector Database built on ChromaDB with Sentence Transformers.
     Stores and retrieves chunk embeddings with full metadata tracking.
     """
     _instance: Optional["VectorStore"] = None
@@ -18,41 +20,50 @@ class VectorStore:
         return cls._instance
 
     def _init_db(self):
+        self._lock = threading.RLock()
         self._embedding_model = None
         self._client = None
         self._collection = None
+        self._chroma_path = None
         self.collection_name = "insightforge_research_docs"
 
     @property
     def client(self):
-        if self._client is None:
-            logger.info(f"Connecting to persistent ChromaDB at: {settings.CHROMA_DIR}")
-            self._client = chromadb.PersistentClient(path=str(settings.CHROMA_DIR))
-        return self._client
+        with self._lock:
+            target_path = str(settings.CHROMA_DIR)
+            if self._client is None or self._chroma_path != target_path:
+                logger.info(f"Connecting to persistent ChromaDB at: {target_path}")
+                self._client = chromadb.PersistentClient(path=target_path)
+                self._chroma_path = target_path
+                self._collection = None
+            return self._client
 
     @property
     def collection(self):
-        if self._collection is None:
-            self._collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"description": "InsightForge AI multi-document research collection"}
-            )
-            logger.info(f"ChromaDB collection '{self.collection_name}' ready. Count: {self._collection.count()}")
-        return self._collection
+        with self._lock:
+            _ = self.client
+            if self._collection is None:
+                self._collection = self.client.get_or_create_collection(
+                    name=self.collection_name,
+                    metadata={"description": "InsightForge AI multi-document research collection"}
+                )
+                logger.info(f"ChromaDB collection '{self.collection_name}' ready. Count: {self._collection.count()}")
+            return self._collection
 
     @property
     def embedding_model(self):
-        if self._embedding_model is None:
-            try:
-                import torch
-                torch.set_num_threads(1)
-                torch.set_num_interop_threads(1)
-            except Exception:
-                pass
-            logger.info(f"Loading embedding model on first use: {settings.EMBEDDING_MODEL_NAME}")
-            self._embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-            logger.info(f"Embedding model '{settings.EMBEDDING_MODEL_NAME}' loaded successfully.")
-        return self._embedding_model
+        with self._lock:
+            if self._embedding_model is None:
+                try:
+                    import torch
+                    torch.set_num_threads(1)
+                    torch.set_num_interop_threads(1)
+                except Exception:
+                    pass
+                logger.info(f"Loading embedding model on first use: {settings.EMBEDDING_MODEL_NAME}")
+                self._embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
+                logger.info(f"Embedding model '{settings.EMBEDDING_MODEL_NAME}' loaded successfully.")
+            return self._embedding_model
 
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         if not chunks:
@@ -60,8 +71,6 @@ class VectorStore:
 
         texts = [c["text"] for c in chunks]
         ids = [c["chunk_id"] for c in chunks]
-        
-        # Format metadata for ChromaDB (flat key-values only)
         metadatas = [
             {
                 "document_id": str(c["document_id"]),
@@ -73,18 +82,27 @@ class VectorStore:
             for c in chunks
         ]
 
-        # Compute embeddings with batching to avoid RAM spikes
         logger.info(f"Computing embeddings for {len(texts)} chunks...")
-        embeddings = self.embedding_model.encode(texts, batch_size=16, show_progress_bar=False, convert_to_tensor=False).tolist()
+        embeddings = self.embedding_model.encode(
+            texts, batch_size=16, show_progress_bar=False, convert_to_tensor=False
+        ).tolist()
 
-        # Add to ChromaDB
-        self.collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=metadatas
-        )
+        with self._lock:
+            self.collection.add(
+                ids=ids,
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas
+            )
         logger.info(f"Successfully indexed {len(chunks)} chunks into ChromaDB.")
+
+    @staticmethod
+    def _build_where_filter(document_ids: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+        if not document_ids:
+            return None
+        if len(document_ids) == 1:
+            return {"document_id": document_ids[0]}
+        return {"document_id": {"$in": document_ids}}
 
     def search(
         self,
@@ -94,28 +112,25 @@ class VectorStore:
     ) -> List[Dict[str, Any]]:
         """
         Perform semantic dense vector retrieval.
-        Optionally filters by document_ids for tenant/document isolation.
+        If document_ids is an empty list, returns [] immediately to guarantee tenant isolation.
         """
-        if self.collection.count() == 0:
+        if document_ids is not None and len(document_ids) == 0:
             return []
 
-        # Generate query vector
+        col = self.collection
+        total = col.count()
+        if total == 0:
+            return []
+
         query_vec = self.embedding_model.encode(query, convert_to_tensor=False).tolist()
+        where_filter = self._build_where_filter(document_ids)
 
-        # Construct filter if document_ids provided
-        where_filter = None
-        if document_ids and len(document_ids) == 1:
-            where_filter = {"document_id": document_ids[0]}
-        elif document_ids and len(document_ids) > 1:
-            where_filter = {"document_id": {"$in": document_ids}}
-
-        results = self.collection.query(
+        results = col.query(
             query_embeddings=[query_vec],
-            n_results=min(top_k, self.collection.count()),
+            n_results=min(top_k, total),
             where=where_filter
         )
 
-        retrieved: List[Dict[str, Any]] = []
         if not results or not results["documents"] or not results["documents"][0]:
             return []
 
@@ -124,8 +139,8 @@ class VectorStore:
         metas = results["metadatas"][0]
         distances = results.get("distances", [[0.0] * len(docs)])[0]
 
+        retrieved: List[Dict[str, Any]] = []
         for chunk_id, text, meta, dist in zip(ids, docs, metas, distances):
-            # Chroma L2 distance to normalized similarity score
             similarity = 1.0 / (1.0 + float(dist)) if dist is not None else 0.5
             retrieved.append({
                 "chunk_id": chunk_id,
@@ -144,9 +159,11 @@ class VectorStore:
         Delete all chunks associated with a specific document_id.
         """
         try:
-            current_count = self.collection.count()
-            self.collection.delete(where={"document_id": document_id})
-            new_count = self.collection.count()
+            with self._lock:
+                col = self.collection
+                current_count = col.count()
+                col.delete(where={"document_id": document_id})
+                new_count = col.count()
             deleted = current_count - new_count
             logger.info(f"Deleted {deleted} chunks for document_id '{document_id}'.")
             return deleted
@@ -156,18 +173,18 @@ class VectorStore:
 
     def get_all_chunks(self, document_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
-        Retrieve all chunks, used for BM25 inverted index in hybrid search.
+        Retrieve chunks (optionally scoped to document_ids) for BM25 inverted index.
+        If document_ids is an empty list, returns [] immediately.
         """
-        if self.collection.count() == 0:
+        if document_ids is not None and len(document_ids) == 0:
             return []
 
-        where_filter = None
-        if document_ids and len(document_ids) == 1:
-            where_filter = {"document_id": document_ids[0]}
-        elif document_ids and len(document_ids) > 1:
-            where_filter = {"document_id": {"$in": document_ids}}
+        col = self.collection
+        if col.count() == 0:
+            return []
 
-        data = self.collection.get(where=where_filter)
+        where_filter = self._build_where_filter(document_ids)
+        data = col.get(where=where_filter)
         chunks: List[Dict[str, Any]] = []
         if not data or not data["ids"]:
             return chunks
@@ -184,9 +201,7 @@ class VectorStore:
         return chunks
 
     def count(self) -> int:
-        if self._collection is None:
-            return 0
-        return self._collection.count()
+        return self.collection.count()
+
 
 vector_store = VectorStore()
-

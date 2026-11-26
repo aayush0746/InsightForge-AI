@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { GoogleIcon } from './AuthModal';
+import { api } from '../services/api';
 
 interface HeaderProps {
   title: string;
@@ -38,6 +39,28 @@ export const Header: React.FC<HeaderProps> = ({
   const [isMenuPinned, setIsMenuPinned] = useState(false);
   const authMenuRef = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [modelBadge, setModelBadge] = useState<{ label: string; isGeminiConfigured: boolean }>({
+    label: 'Loading Engine...',
+    isGeminiConfigured: true,
+  });
+
+  const loadEngineStatus = async () => {
+    try {
+      const [health, cfg] = await Promise.all([api.getHealth(), api.getSettings()]);
+      setModelBadge({
+        label: health.gemini_api_configured ? cfg.model_name : 'Extractive Mode (No API Key)',
+        isGeminiConfigured: health.gemini_api_configured,
+      });
+    } catch {
+      setModelBadge({ label: 'Engine Connected', isGeminiConfigured: true });
+    }
+  };
+
+  useEffect(() => {
+    loadEngineStatus();
+    window.addEventListener('insightforge-settings-change', loadEngineStatus);
+    return () => window.removeEventListener('insightforge-settings-change', loadEngineStatus);
+  }, []);
 
   const handleMouseEnter = () => {
     if (hoverTimeoutRef.current) {
@@ -107,9 +130,15 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        <div className="hidden md:flex items-center space-x-2 px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+        <div
+          className={`hidden md:flex items-center space-x-2 px-3 py-1.5 rounded-full border text-xs font-medium ${
+            modelBadge.isGeminiConfigured
+              ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-100 dark:border-indigo-900/50 text-indigo-700 dark:text-indigo-300'
+              : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-300'
+          }`}
+        >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>Gemini 3.6 Flash Active</span>
+          <span>{modelBadge.label}</span>
         </div>
 
         <button
@@ -121,7 +150,7 @@ export const Header: React.FC<HeaderProps> = ({
           {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
         </button>
 
-        <div className="h-5 w-px bg-slate-200 dark:border-slate-800 mx-1" />
+        <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-1" />
 
         {/* AUTHENTICATION CONTROLS */}
         {isAuthenticated && user ? (

@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, HTTPException, Request, Response, Header, Depends, status
 from typing import Optional
 
@@ -21,6 +22,7 @@ from backend.app.core.logger import logger
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+
 @router.get("/config")
 async def get_auth_config():
     """
@@ -31,18 +33,37 @@ async def get_auth_config():
         "google_client_id": settings.GOOGLE_CLIENT_ID
     }
 
+
 def extract_session_token(request: Request, authorization: Optional[str] = None) -> Optional[str]:
     """
-    Extracts session token from HTTP-only cookie first, then Bearer header fallback.
+    Extracts session token from explicit Authorization Bearer header first,
+    then falls back to the HTTP-only session cookie.
     """
+    if authorization and authorization.startswith("Bearer "):
+        bearer_token = authorization.split(" ", 1)[1].strip()
+        if bearer_token:
+            return bearer_token
+
     cookie_token = request.cookies.get(settings.SESSION_COOKIE_NAME)
     if cookie_token:
         return cookie_token
 
-    if authorization and authorization.startswith("Bearer "):
-        return authorization.split(" ")[1]
-
     return None
+
+
+def _set_session_cookie(response: Response, session_token: str) -> None:
+    max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=session_token,
+        max_age=max_age_seconds,
+        expires=max_age_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=settings.COOKIE_SECURE,
+        path="/"
+    )
+
 
 async def get_current_user_optional(
     request: Request,
@@ -56,6 +77,32 @@ async def get_current_user_optional(
         return None
     return auth_service.get_user_by_session_token(token)
 
+
+async def get_effective_owner_id(
+    request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+) -> str:
+    """
+    Returns authenticated user_id or an isolated guest owner identifier (`guest_<id>`)
+    derived from `X-Guest-Session-Id` header or `insightforge_guest_id` cookie.
+    """
+    if current_user:
+        return current_user.id
+
+    raw_gid = (
+        request.headers.get("X-Guest-Session-Id")
+        or request.cookies.get("insightforge_guest_id")
+        or ""
+    )
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "", raw_gid.strip())
+    if sanitized.startswith("guest_"):
+        sanitized = sanitized[6:]
+    sanitized = sanitized[:32]
+    if sanitized:
+        return f"guest_{sanitized}"
+    return "guest_anonymous"
+
+
 async def require_authenticated_user(
     request: Request,
     authorization: Optional[str] = Header(None)
@@ -67,34 +114,19 @@ async def require_authenticated_user(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please sign in with Google."
+            detail="Authentication required. Please sign in."
         )
     return user
+
 
 @router.post("/google", response_model=AuthResponse)
 async def google_auth(payload: GoogleAuthRequest, response: Response):
     """
-    Google OAuth 2.0 endpoint:
-    - Verifies Google token.
-    - Creates or updates user in PostgreSQL.
-    - Sets secure HTTP-only session cookie.
+    Google OAuth 2.0 endpoint: verifies Google ID token and sets HTTP-only session cookie.
     """
     try:
         user_obj, session_token = auth_service.authenticate_google(payload)
-
-        # Set secure HTTP-only session cookie
-        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
-        response.set_cookie(
-            key=settings.SESSION_COOKIE_NAME,
-            value=session_token,
-            max_age=max_age_seconds,
-            expires=max_age_seconds,
-            httponly=True,
-            samesite="lax",
-            secure=False,  # True in HTTPS production
-            path="/"
-        )
-
+        _set_session_cookie(response, session_token)
         return AuthResponse(
             success=True,
             access_token=session_token,
@@ -106,34 +138,20 @@ async def google_auth(payload: GoogleAuthRequest, response: Response):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.exception(f"Google authentication unexpected failure: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Google authentication failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google authentication failed.")
+
 
 @router.post("/signin", response_model=AuthResponse)
 async def signin(payload: UserLogin, response: Response):
     """
-    Email & password login endpoint:
-    - Finds existing user in PostgreSQL.
-    - Validates bcrypt password hash.
-    - Sets secure HTTP-only session cookie.
+    Email & password login endpoint.
     """
     try:
         user_obj, session_token = auth_service.signin_email_user(
             email=payload.email,
             password=payload.password
         )
-
-        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
-        response.set_cookie(
-            key=settings.SESSION_COOKIE_NAME,
-            value=session_token,
-            max_age=max_age_seconds,
-            expires=max_age_seconds,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            path="/"
-        )
-
+        _set_session_cookie(response, session_token)
         return AuthResponse(
             success=True,
             access_token=session_token,
@@ -144,14 +162,13 @@ async def signin(payload: UserLogin, response: Response):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Sign in failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Sign in failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sign in failed.")
+
 
 @router.post("/signup", response_model=AuthResponse)
 async def signup(payload: UserCreate, response: Response):
     """
-    Email signup endpoint:
-    - Registers user in PostgreSQL with bcrypt password.
-    - Sets secure HTTP-only session cookie.
+    Email signup endpoint: registers a brand-new user with bcrypt password hash.
     """
     try:
         user_obj, session_token = auth_service.signup_email_user(
@@ -159,19 +176,7 @@ async def signup(payload: UserCreate, response: Response):
             name=payload.name,
             password=payload.password
         )
-
-        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
-        response.set_cookie(
-            key=settings.SESSION_COOKIE_NAME,
-            value=session_token,
-            max_age=max_age_seconds,
-            expires=max_age_seconds,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            path="/"
-        )
-
+        _set_session_cookie(response, session_token)
         return AuthResponse(
             success=True,
             access_token=session_token,
@@ -182,44 +187,47 @@ async def signup(payload: UserCreate, response: Response):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Sign up failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Sign up failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sign up failed.")
+
 
 @router.post("/forgot-password")
 async def forgot_password(payload: ForgotPasswordRequest):
     """
     Sends a 6-digit password reset verification code to the registered email.
+    Avoids disclosing whether unregistered emails exist in production.
     """
     try:
         clean_email = payload.email.lower().strip()
         db = SessionLocal()
         try:
             user = db.query(UserModel).filter(UserModel.email == clean_email).first()
-            if not user:
-                raise ValueError("No account found with this email address. Please sign up first.")
-            user_name = user.full_name
+            user_name = user.full_name if user else None
         finally:
             db.close()
 
-        email_service.generate_and_send_otp(
+        if not user_name:
+            return {
+                "success": True,
+                "message": f"If an account exists for {clean_email}, a password reset verification code has been sent."
+            }
+
+        result = email_service.generate_and_send_otp(
             email=clean_email,
             name=user_name,
             purpose="password_reset"
         )
-        return {
-            "success": True,
-            "message": f"Password reset verification code sent to {clean_email}."
-        }
+        return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to dispatch password reset OTP: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to send password reset code: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to send password reset code.")
+
 
 @router.post("/reset-password", response_model=AuthResponse)
 async def reset_password(payload: ResetPasswordRequest, response: Response):
     """
     Verifies 6-digit OTP code and updates user's password with a new bcrypt hash.
-    Automatically issues a fresh session token and logs the user in.
     """
     try:
         user_obj, session_token = auth_service.reset_password_with_otp(
@@ -227,19 +235,7 @@ async def reset_password(payload: ResetPasswordRequest, response: Response):
             otp=payload.otp,
             new_password=payload.new_password
         )
-
-        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
-        response.set_cookie(
-            key=settings.SESSION_COOKIE_NAME,
-            value=session_token,
-            max_age=max_age_seconds,
-            expires=max_age_seconds,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            path="/"
-        )
-
+        _set_session_cookie(response, session_token)
         return AuthResponse(
             success=True,
             access_token=session_token,
@@ -250,65 +246,54 @@ async def reset_password(payload: ResetPasswordRequest, response: Response):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Password reset failed.")
+
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOtpRequest):
     """
     Sends a 6-digit OTP to the user's email for verification & passwordless login.
-    Supports both login and signup workflows seamlessly.
     """
     try:
         clean_email = payload.email.lower().strip()
         purpose = (payload.purpose or "login").lower().strip()
-
-        result = email_service.generate_and_send_otp(
+        return email_service.generate_and_send_otp(
             email=clean_email,
             name=payload.name,
             purpose=purpose
         )
-        return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to dispatch OTP: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to send verification code: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to send verification code.")
+
 
 @router.post("/verify-otp", response_model=AuthResponse)
 async def verify_otp(payload: VerifyOtpRequest, response: Response):
     """
-    Verifies 6-digit OTP code and creates the verified user in PostgreSQL.
+    Verifies 6-digit OTP code and signs in or creates the verified user.
     """
     try:
-        user_obj, session_token = auth_service.verify_otp_and_register_user(
+        user_obj, session_token = auth_service.complete_otp_login_or_register(
             email=payload.email,
             otp=payload.otp,
-            name=payload.name
+            name=payload.name,
+            password=payload.password
         )
-
-        max_age_seconds = settings.SESSION_EXPIRE_DAYS * 24 * 3600
-        response.set_cookie(
-            key=settings.SESSION_COOKIE_NAME,
-            value=session_token,
-            max_age=max_age_seconds,
-            expires=max_age_seconds,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            path="/"
-        )
-
+        _set_session_cookie(response, session_token)
         return AuthResponse(
             success=True,
             access_token=session_token,
             user=user_obj,
-            message="Email verified and account created successfully."
+            message="Email verified successfully."
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"OTP verification failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Verification failed.")
+
 
 @router.post("/resend-otp")
 async def resend_otp(payload: SendOtpRequest):
@@ -317,10 +302,11 @@ async def resend_otp(payload: SendOtpRequest):
     """
     return await send_otp(payload)
 
+
 @router.get("/me", response_model=User)
 async def get_me(request: Request, authorization: Optional[str] = Header(None)):
     """
-    Validates session cookie / Bearer token and returns current user from PostgreSQL.
+    Validates session cookie / Bearer token and returns current user.
     """
     token = extract_session_token(request, authorization)
     if not token:
@@ -338,10 +324,11 @@ async def get_me(request: Request, authorization: Optional[str] = Header(None)):
 
     return user
 
+
 @router.post("/logout")
 async def logout(request: Request, response: Response, authorization: Optional[str] = Header(None)):
     """
-    Logs out user, deletes session from PostgreSQL, and clears the HTTP-only cookie.
+    Logs out user, deletes session from user_sessions, and clears the HTTP-only cookie.
     """
     token = extract_session_token(request, authorization)
     if token:

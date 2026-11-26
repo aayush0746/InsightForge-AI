@@ -1,23 +1,29 @@
+import concurrent.futures
 import json
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from backend.app.core.config import settings
-from backend.app.core.logger import logger
-from backend.app.schemas.research import ResearchReport, AgentExecutionStep
-from backend.app.agents.planner import planner_agent
-from backend.app.agents.research import research_agent
+
 from backend.app.agents.analyst import analyst_agent
 from backend.app.agents.critic import critic_agent
 from backend.app.agents.fact_checker import fact_checker_agent
+from backend.app.agents.planner import planner_agent
+from backend.app.agents.research import research_agent
 from backend.app.agents.synthesizer import synthesizer_agent
+from backend.app.core.config import settings
+from backend.app.core.logger import logger
+from backend.app.db.models import ResearchReportModel
+from backend.app.db.session import SessionLocal, init_db
+from backend.app.schemas.research import ResearchReport, AgentExecutionStep
 
-REPORTS_STORE_PATH = settings.DATA_DIR / "research_reports.json"
 
 class AgentOrchestrator:
     """
-    Coordinates the multi-agent research workflow:
-    Planner -> Research -> Analyst -> Critic -> Fact Checker -> Synthesizer.
+    Coordinates the multi-agent research workflow and persists reports in SQL:
+    Planner -> Research -> Analyst -> (Critic || Fact Checker) -> Synthesizer.
     """
+
+    def __init__(self):
+        init_db()
 
     def run_research(
         self,
@@ -25,12 +31,11 @@ class AgentOrchestrator:
         document_ids: Optional[List[str]] = None,
         max_subtasks: int = 4,
         deep_analysis: bool = True,
-        enable_web_search: bool = False
+        enable_web_search: bool = False,
+        user_id: Optional[str] = None
     ) -> ResearchReport:
         logger.info(f"--- Starting Agentic Research Workflow for: '{question}' (web search: {enable_web_search}) ---")
         steps: List[AgentExecutionStep] = []
-
-        # Model selection: fast flash for planner, deep reasoning model for analyst/critic/synthesizer if configured
         reasoning_model = settings.DEFAULT_GEMINI_MODEL
 
         # 1. Planner Agent
@@ -53,7 +58,7 @@ class AgentOrchestrator:
         citations = research_out["citations"]
         steps.append(research_out["step"])
 
-        # 3. Analyst Agent (Deep synthesis)
+        # 3. Analyst Agent
         analyst_out = analyst_agent.analyze(
             question=question,
             evidence_chunks=evidence_chunks,
@@ -63,8 +68,7 @@ class AgentOrchestrator:
         analysis = analyst_out["analysis"]
         steps.append(analyst_out["step"])
 
-        # 4 & 5. Run Critic Agent and Fact Checker Agent concurrently for 2x faster execution
-        import concurrent.futures
+        # 4 & 5. Critic & Fact Checker concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             critic_future = executor.submit(
                 critic_agent.review,
@@ -86,7 +90,7 @@ class AgentOrchestrator:
         steps.append(critic_out["step"])
         steps.append(fact_out["step"])
 
-        # 6. Synthesizer Agent (Publication report compilation)
+        # 6. Synthesizer Agent
         synth_out = synthesizer_agent.synthesize(
             question=question,
             plan=plan,
@@ -98,40 +102,65 @@ class AgentOrchestrator:
             model=reasoning_model
         )
         report: ResearchReport = synth_out["report"]
+        report.user_id = user_id
 
-        # Persist report
         self.save_report(report)
         logger.info(f"--- Completed Agentic Research: {report.research_id} ---")
         return report
 
     def save_report(self, report: ResearchReport) -> None:
-        try:
-            records = self.load_reports()
-            # Convert report to dict (handling datetime serialization)
-            report_dict = json.loads(report.model_dump_json())
-            records[report.research_id] = report_dict
+        report_json = report.model_dump_json()
+        with SessionLocal() as db:
+            try:
+                existing = db.query(ResearchReportModel).filter(
+                    ResearchReportModel.research_id == report.research_id
+                ).first()
+                if existing:
+                    existing.user_id = report.user_id
+                    existing.question = report.question
+                    existing.grounding_score = report.grounding_score
+                    existing.report_json = report_json
+                else:
+                    db.add(ResearchReportModel(
+                        research_id=report.research_id,
+                        user_id=report.user_id,
+                        question=report.question,
+                        grounding_score=report.grounding_score,
+                        report_json=report_json,
+                        created_at=report.created_at or datetime.now(timezone.utc)
+                    ))
+                db.commit()
+                logger.info(f"Persisted report {report.research_id} to SQL.")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Failed to persist research report: {e}")
 
-            with open(REPORTS_STORE_PATH, "w", encoding="utf-8") as f:
-                json.dump(records, f, indent=2)
-            logger.info(f"Persisted report {report.research_id} to disk.")
-        except Exception as e:
-            logger.error(f"Failed to persist research report: {e}")
+    def load_reports(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        with SessionLocal() as db:
+            q = db.query(ResearchReportModel)
+            if user_id is not None:
+                q = q.filter(ResearchReportModel.user_id == user_id)
+            rows = q.order_by(ResearchReportModel.created_at.desc()).all()
+            out: Dict[str, Any] = {}
+            for r in rows:
+                try:
+                    out[r.research_id] = json.loads(r.report_json)
+                except Exception:
+                    pass
+            return out
 
-    def load_reports(self) -> Dict[str, Any]:
-        if not REPORTS_STORE_PATH.exists():
-            return {}
-        try:
-            with open(REPORTS_STORE_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+    def get_report(self, research_id: str, user_id: Optional[str] = None) -> Optional[ResearchReport]:
+        with SessionLocal() as db:
+            row = db.query(ResearchReportModel).filter(
+                ResearchReportModel.research_id == research_id
+            ).first()
+            if not row:
+                return None
+            if user_id is not None and row.user_id != user_id:
+                return None
+            if user_id is None and row.user_id is not None:
+                return None
+            return ResearchReport(**json.loads(row.report_json))
 
-    def get_report(self, research_id: str) -> Optional[ResearchReport]:
-        reports = self.load_reports()
-        data = reports.get(research_id)
-        if not data:
-            return None
-        return ResearchReport(**data)
 
 agent_orchestrator = AgentOrchestrator()
-

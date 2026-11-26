@@ -45,6 +45,15 @@ export function App() {
 
   useEffect(() => {
     refreshGlobalData();
+    const handleSync = () => {
+      refreshGlobalData();
+    };
+    window.addEventListener('insightforge-auth-change', handleSync);
+    window.addEventListener('insightforge-docs-change', handleSync);
+    return () => {
+      window.removeEventListener('insightforge-auth-change', handleSync);
+      window.removeEventListener('insightforge-docs-change', handleSync);
+    };
   }, []);
 
   const toggleTheme = () => setIsDark(prev => !prev);

@@ -29,10 +29,10 @@ import { VoiceInputButton } from '../components/VoiceInputButton';
 import { InteractiveChart } from '../components/InteractiveChart';
 
 const SAMPLE_QUESTIONS = [
-  "What is the required attendance percentage for students to appear in exams?",
-  "How can students apply for leave and who is the approving authority?",
-  "What is the compensation and stipend structure during training and probation?",
-  "Explain the comprehensive student guidelines, leave policies, and code of conduct."
+  "Extract mandatory attendance, leave approval authorities, probation rules, and compliance thresholds with exact citations.",
+  "Audit vendor SLA uptime guarantees, critical response times, financial penalties, and termination notice periods.",
+  "Profile departmental budgets, regional revenue growth, and numeric cost variances across uploaded spreadsheets.",
+  "Generate a BLUF executive due diligence briefing covering strategic initiatives, financial exposure, and evidence gaps."
 ];
 
 export const Workspace: React.FC = () => {
@@ -349,7 +349,7 @@ export const Workspace: React.FC = () => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 handleSubmit();
               }

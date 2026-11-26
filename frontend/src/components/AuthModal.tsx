@@ -10,11 +10,7 @@ import {
   AlertCircle,
   Sparkles,
   CheckCircle2,
-  ShieldCheck,
   Loader2,
-  Plus,
-  Trash2,
-  ChevronRight,
   ArrowLeft,
   KeyRound,
   RefreshCw
@@ -22,9 +18,9 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
-// Authentic Google Multi-Color G Icon SVG
+// Google Multi-Color G Icon SVG
 export const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
-  <svg className={className} viewBox="0 0 24 24">
+  <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
     <path
       fill="#4285F4"
       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -44,24 +40,6 @@ export const GoogleIcon: React.FC<{ className?: string }> = ({ className = 'w-5 
   </svg>
 );
 
-interface SavedGoogleAccount {
-  name: string;
-  email: string;
-  avatar_url?: string;
-}
-
-const DEFAULT_GOOGLE_ACCOUNTS: SavedGoogleAccount[] = [
-  {
-    name: 'Alex Rivera',
-    email: 'alex.rivera@gmail.com',
-    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-  },
-  {
-    name: 'Student Researcher',
-    email: 'researcher.student@gmail.com'
-  }
-];
-
 export const AuthModal: React.FC = () => {
   const {
     showAuthModal,
@@ -75,9 +53,7 @@ export const AuthModal: React.FC = () => {
     signInWithGoogle
   } = useAuth();
 
-  // 'form' = Main Single "Continue with Google" view; 'google_chooser' = Choose Google Account; 'google_custom' = Enter custom Gmail; 'otp_verify' = Enter OTP; 'forgot_password' = Reset Password
-  const [modalView, setModalView] = useState<'form' | 'google_chooser' | 'google_custom' | 'otp_verify' | 'forgot_password'>('form');
-  const [showEmailForm, setShowEmailForm] = useState(true);
+  const [modalView, setModalView] = useState<'form' | 'otp_verify' | 'forgot_password'>('form');
   const [authMethod, setAuthMethod] = useState<'otp' | 'password'>('otp');
 
   // Forgot password state
@@ -88,6 +64,7 @@ export const AuthModal: React.FC = () => {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
 
+  // Primary form fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -96,24 +73,11 @@ export const AuthModal: React.FC = () => {
 
   // OTP Verification state
   const [otp, setOtp] = useState('');
+  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
   const [otpSentToEmail, setOtpSentToEmail] = useState('');
   const [otpPendingData, setOtpPendingData] = useState<{ name: string; email: string; password?: string } | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
-
-  // Custom Google input state
-  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
-  const [customGoogleName, setCustomGoogleName] = useState('');
-
-  // Saved accounts state
-  const [savedAccounts, setSavedAccounts] = useState<SavedGoogleAccount[]>(() => {
-    try {
-      const stored = localStorage.getItem('insightforge_saved_google_accounts');
-      return stored ? JSON.parse(stored) : DEFAULT_GOOGLE_ACCOUNTS;
-    } catch {
-      return DEFAULT_GOOGLE_ACCOUNTS;
-    }
-  });
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -123,20 +87,18 @@ export const AuthModal: React.FC = () => {
   const [isGisButtonRendered, setIsGisButtonRendered] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
-  // Fetch client ID from backend if not in env
   useEffect(() => {
     if (!clientId) {
       api.getAuthConfig().then((cfg) => {
         if (cfg.google_client_id) {
           setClientId(cfg.google_client_id);
         }
-      }).catch((err) => {
-        console.warn('Could not fetch auth config:', err);
+      }).catch(() => {
+        // ignore config fetch error
       });
     }
   }, [clientId]);
 
-  // Initialize and render Google Identity Services button
   useEffect(() => {
     if (!showAuthModal || modalView !== 'form' || !clientId) return;
 
@@ -165,7 +127,6 @@ export const AuthModal: React.FC = () => {
             },
           });
 
-          // Render official button
           googleBtnRef.current.innerHTML = '';
           (window as any).google.accounts.id.renderButton(googleBtnRef.current, {
             theme: 'outline',
@@ -176,8 +137,7 @@ export const AuthModal: React.FC = () => {
             logo_alignment: 'left',
           });
           setIsGisButtonRendered(true);
-        } catch (err) {
-          console.warn('Failed to render Google button:', err);
+        } catch {
           setIsGisButtonRendered(false);
         }
       }
@@ -191,19 +151,22 @@ export const AuthModal: React.FC = () => {
       setModalView('form');
       setErrorMessage(null);
       setInfoMessage(null);
-      setShowEmailForm(false);
+      setDevOtp(null);
       setIsGisButtonRendered(false);
       setOtp('');
+      setForgotOtp('');
       setName('');
       setEmail('');
       setPassword('');
       setConfirmPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
       setShowPassword(false);
+      setShowNewPassword(false);
       setOtpPendingData(null);
     }
   }, [showAuthModal]);
 
-  // Clean sensitive fields whenever switching between Sign In and Sign Up
   useEffect(() => {
     setPassword('');
     setConfirmPassword('');
@@ -221,27 +184,11 @@ export const AuthModal: React.FC = () => {
 
   if (!showAuthModal) return null;
 
-  const handleGoogleClick = () => {
-    setErrorMessage(null);
-    if (clientId && (window as any).google?.accounts?.id) {
-      try {
-        (window as any).google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            setModalView('google_chooser');
-          }
-        });
-        return;
-      } catch (err) {
-        console.warn('Google prompt fallback:', err);
-      }
-    }
-    setModalView('google_chooser');
-  };
-
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setInfoMessage(null);
+    setDevOtp(null);
 
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
@@ -261,7 +208,8 @@ export const AuthModal: React.FC = () => {
         email: cleanEmail,
       });
       setOtpSentToEmail(cleanEmail);
-      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Verification code sent to your email.');
+      setDevOtp(res.dev_otp || null);
+      setInfoMessage(res.message || 'Verification code sent to your email.');
       setOtp('');
       setOtpCountdown(30);
       setModalView('otp_verify');
@@ -316,17 +264,11 @@ export const AuthModal: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    if (authMethod === 'otp') {
-      return handleSendOtp(e);
-    }
-    return handlePasswordSubmit(e);
-  };
-
   const handleRequestPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setInfoMessage(null);
+    setDevOtp(null);
     const cleanEmail = (forgotEmail || email).trim().toLowerCase();
     if (!cleanEmail) {
       setErrorMessage('Please enter your email address.');
@@ -337,7 +279,8 @@ export const AuthModal: React.FC = () => {
       setIsLoading(true);
       const res = await api.forgotPassword({ email: cleanEmail });
       setForgotEmail(cleanEmail);
-      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Password reset code sent to your email.');
+      setDevOtp(res.dev_otp || null);
+      setInfoMessage(res.message || 'Password reset code sent to your email.');
       setForgotStep('reset');
       setForgotOtp('');
       setNewPassword('');
@@ -424,79 +367,11 @@ export const AuthModal: React.FC = () => {
         email: otpPendingData.email,
         name: otpPendingData.name
       });
-      setInfoMessage(res.message ? res.message.replace(/\s*\(Code:\s*\d+\)/gi, '') : 'Verification code sent to your email.');
+      setDevOtp(res.dev_otp || null);
+      setInfoMessage(res.message || 'Verification code sent to your email.');
       setOtpCountdown(30);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to resend verification code.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSelectGoogleAccount = async (account: SavedGoogleAccount) => {
-    try {
-      setIsLoading(true);
-      setErrorMessage(null);
-
-      await signInWithGoogle({
-        email: account.email.toLowerCase(),
-        name: account.name,
-        avatar_url: account.avatar_url || null,
-        google_id: `g_${Date.now()}`,
-        mode: authModalMode
-      });
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Google Sign-In failed.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCustomGoogleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customGoogleEmail.trim()) {
-      setErrorMessage('Please enter your Google / Gmail address.');
-      return;
-    }
-
-    const emailTrimmed = customGoogleEmail.trim().toLowerCase();
-    const nameTrimmed = customGoogleName.trim() || emailTrimmed.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-
-    const newAccount: SavedGoogleAccount = {
-      name: nameTrimmed,
-      email: emailTrimmed
-    };
-
-    // Save to list
-    const updated = [newAccount, ...savedAccounts.filter((a) => a.email.toLowerCase() !== emailTrimmed)];
-    setSavedAccounts(updated);
-    try {
-      localStorage.setItem('insightforge_saved_google_accounts', JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
-
-    await handleSelectGoogleAccount(newAccount);
-  };
-
-  const handleRemoveSavedAccount = (e: React.MouseEvent, emailToRemove: string) => {
-    e.stopPropagation();
-    const updated = savedAccounts.filter((a) => a.email !== emailToRemove);
-    setSavedAccounts(updated);
-    try {
-      localStorage.setItem('insightforge_saved_google_accounts', JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleDemoSignIn = async () => {
-    try {
-      setIsLoading(true);
-      setErrorMessage(null);
-      await signIn('admin@insightforge.ai', 'admin123');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Demo sign in failed.');
     } finally {
       setIsLoading(false);
     }
@@ -509,10 +384,11 @@ export const AuthModal: React.FC = () => {
         {/* VIEW 1: MAIN SIGN IN / SIGN UP MODAL */}
         {modalView === 'form' && (
           <>
-            {/* Header */}
             <div className="p-6 bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white relative">
               <button
+                type="button"
                 onClick={closeAuthModal}
+                aria-label="Close authentication modal"
                 className="absolute right-5 top-5 p-1.5 rounded-xl text-indigo-200 hover:text-white hover:bg-white/10 transition"
               >
                 <X className="w-5 h-5" />
@@ -534,7 +410,6 @@ export const AuthModal: React.FC = () => {
                   : 'Sign up to start collaborative agentic research and doc analysis'}
               </p>
 
-              {/* Mode Switch Tabs */}
               <div className="flex p-1 rounded-xl bg-indigo-950/60 border border-indigo-700/50 mt-5 text-xs font-semibold">
                 <button
                   type="button"
@@ -565,33 +440,30 @@ export const AuthModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Body Content */}
             <div className="p-6 space-y-5">
-              {/* Single Primary "Continue with Google" Button (Requirement 3) */}
-              <div className="space-y-3">
-                {/* Official Google Identity Services One-Click Button */}
-                <div
-                  ref={googleBtnRef}
-                  className={`flex justify-center w-full overflow-hidden rounded-2xl ${isGisButtonRendered ? '' : 'hidden'}`}
-                />
+              {/* Official Google Identity Services Button (rendered only when GOOGLE_CLIENT_ID is configured) */}
+              {clientId ? (
+                <div className="space-y-2">
+                  <div
+                    ref={googleBtnRef}
+                    className={`flex justify-center w-full overflow-hidden rounded-2xl ${isGisButtonRendered ? '' : 'hidden'}`}
+                  />
+                  {!isGisButtonRendered && (
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs text-slate-500 flex items-center justify-center gap-2">
+                      <GoogleIcon className="w-4 h-4 shrink-0" />
+                      <span>Loading Google Sign-In...</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <GoogleIcon className="w-4 h-4 shrink-0 opacity-75" />
+                  <span>Google OAuth activates once <code className="font-mono text-indigo-600 dark:text-indigo-400">GOOGLE_CLIENT_ID</code> is configured. Sign in via Email OTP or Password below.</span>
+                </div>
+              )}
 
-                {/* Rendered only if Google Identity iframe is not available */}
-                {!isGisButtonRendered && (
-                  <button
-                    type="button"
-                    onClick={handleGoogleClick}
-                    disabled={isLoading}
-                    className="w-full flex items-center justify-center gap-3 px-5 py-3.5 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-750 hover:border-slate-400 dark:hover:border-slate-600 font-semibold text-sm shadow-xs transition duration-150 cursor-pointer disabled:opacity-50"
-                  >
-                    <GoogleIcon className="w-5 h-5 shrink-0" />
-                    <span>Continue with Google</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Error Banner */}
               {errorMessage && (
-                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex flex-col gap-2 animate-in fade-in">
+                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex flex-col gap-2 animate-in fade-in" role="alert">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
@@ -600,37 +472,36 @@ export const AuthModal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setErrorMessage(null)}
+                      aria-label="Dismiss error"
                       className="text-rose-400 hover:text-rose-600 dark:hover:text-rose-200 p-0.5"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  {errorMessage.toLowerCase().includes('sign up') && authModalMode === 'signin' && (
+                  {errorMessage.toLowerCase().includes('sign in') && authModalMode === 'signup' && (
                     <button
                       type="button"
                       onClick={() => {
-                        setAuthModalMode('signup');
+                        setAuthModalMode('signin');
                         setErrorMessage(null);
                       }}
                       className="self-start text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
                     >
-                      <span>Click here to switch to Sign Up →</span>
+                      <span>Switch to Sign In →</span>
                     </button>
                   )}
                 </div>
               )}
 
-              {/* Divider */}
               <div className="relative flex items-center justify-center my-2">
                 <div className="border-t border-slate-200 dark:border-slate-800 w-full"></div>
-                <span className="bg-white dark:bg-slate-900 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Or continue with email
+                <span className="bg-white dark:bg-slate-900 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                  Continue with email
                 </span>
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full"></div>
               </div>
 
-              {/* Email Authentication Options */}
               <div className="space-y-3">
-                {/* Method Switcher: Instant OTP vs Password */}
                 <div className="flex p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold">
                   <button
                     type="button"
@@ -666,18 +537,20 @@ export const AuthModal: React.FC = () => {
                 {authMethod === 'otp' && (
                   <form onSubmit={handleSendOtp} className="space-y-3 animate-in fade-in duration-150">
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      We'll send a 6-digit verification code to your email. No password needed!
+                      We&apos;ll issue a 6-digit verification code for passwordless sign-in.
                     </p>
 
                     {authModalMode === 'signup' && (
                       <div>
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        <label htmlFor="auth-otp-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                           Full Name
                         </label>
                         <div className="relative">
                           <UserIcon className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                           <input
+                            id="auth-otp-name"
                             type="text"
+                            autoComplete="name"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             placeholder="e.g. Dr. Jane Watson"
@@ -688,13 +561,18 @@ export const AuthModal: React.FC = () => {
                     )}
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      <label htmlFor="auth-otp-email" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         Email Address
                       </label>
                       <div className="relative">
                         <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                         <input
+                          id="auth-otp-email"
                           type="email"
+                          autoComplete="email"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                           placeholder="name@company.com"
@@ -730,13 +608,15 @@ export const AuthModal: React.FC = () => {
                   <form onSubmit={handlePasswordSubmit} className="space-y-3 animate-in fade-in duration-150">
                     {authModalMode === 'signup' && (
                       <div>
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        <label htmlFor="auth-pw-name" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                           Full Name
                         </label>
                         <div className="relative">
                           <UserIcon className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                           <input
+                            id="auth-pw-name"
                             type="text"
+                            autoComplete="name"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             placeholder="e.g. Dr. Jane Watson"
@@ -748,13 +628,18 @@ export const AuthModal: React.FC = () => {
                     )}
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      <label htmlFor="auth-pw-email" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                         Email Address
                       </label>
                       <div className="relative">
                         <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                         <input
+                          id="auth-pw-email"
                           type="email"
+                          autoComplete="username"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                           placeholder="name@company.com"
@@ -766,7 +651,7 @@ export const AuthModal: React.FC = () => {
 
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        <label htmlFor="auth-pw-password" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                           Password
                         </label>
                         {authModalMode === 'signin' && (
@@ -775,6 +660,7 @@ export const AuthModal: React.FC = () => {
                             onClick={() => {
                               setErrorMessage(null);
                               setInfoMessage(null);
+                              setDevOtp(null);
                               setForgotEmail(email);
                               setForgotStep('request');
                               setModalView('forgot_password');
@@ -788,6 +674,7 @@ export const AuthModal: React.FC = () => {
                       <div className="relative">
                         <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                         <input
+                          id="auth-pw-password"
                           type={showPassword ? 'text' : 'password'}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
@@ -799,6 +686,8 @@ export const AuthModal: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
+                          aria-pressed={showPassword}
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
                           className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                         >
                           {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -808,12 +697,13 @@ export const AuthModal: React.FC = () => {
 
                     {authModalMode === 'signup' && (
                       <div>
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        <label htmlFor="auth-pw-confirm" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                           Confirm Password
                         </label>
                         <div className="relative">
                           <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                           <input
+                            id="auth-pw-confirm"
                             type={showPassword ? 'text' : 'password'}
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
@@ -846,416 +736,11 @@ export const AuthModal: React.FC = () => {
                   </form>
                 )}
               </div>
-
-              {/* Quick Demo Sign In */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-slate-400">Quick Test?</span>
-                <button
-                  type="button"
-                  onClick={handleDemoSignIn}
-                  disabled={isLoading}
-                  className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Instant Lead Researcher Login</span>
-                </button>
-              </div>
             </div>
           </>
         )}
 
-        {/* VIEW 2: AUTHENTIC GOOGLE ACCOUNT CHOOSER */}
-        {modalView === 'google_chooser' && (
-          <div className="p-6 space-y-6">
-            {/* Top Bar with Back Arrow */}
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setModalView('form')}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>Back</span>
-              </button>
-
-              <button
-                onClick={closeAuthModal}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Google Brand Header */}
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center mx-auto shadow-xs">
-                <GoogleIcon className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-sans">
-                Choose an account
-              </h3>
-              <p className="text-xs text-slate-500">
-                to continue to <strong className="text-indigo-600 dark:text-indigo-400">InsightForge AI</strong>
-              </p>
-            </div>
-
-            {errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-            {/* List of Accounts */}
-            <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-              {savedAccounts.map((acc) => (
-                <div
-                  key={acc.email}
-                  onClick={() => handleSelectGoogleAccount(acc)}
-                  className="p-3.5 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/60 transition cursor-pointer group"
-                >
-                  <div className="flex items-center gap-3 truncate">
-                    {acc.avatar_url ? (
-                      <img
-                        src={acc.avatar_url}
-                        alt={acc.name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                        {acc.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="truncate text-left">
-                      <div className="font-semibold text-xs text-slate-900 dark:text-slate-100 truncate">
-                        {acc.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500 truncate">{acc.email}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={(e) => handleRemoveSavedAccount(e, acc.email)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition opacity-0 group-hover:opacity-100"
-                      title="Remove from list"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <ChevronRight className="w-4 h-4 text-slate-400" />
-                  </div>
-                </div>
-              ))}
-
-              {/* Option: Use Another Account */}
-              <div
-                onClick={() => {
-                  setErrorMessage(null);
-                  setModalView('google_custom');
-                }}
-                className="p-3.5 flex items-center gap-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition cursor-pointer"
-              >
-                <div className="w-9 h-9 rounded-full border border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-500 shrink-0">
-                  <Plus className="w-4 h-4" />
-                </div>
-                <div className="text-left">
-                  <div className="font-semibold text-xs text-slate-900 dark:text-slate-100">
-                    Use another Google / Gmail account
-                  </div>
-                  <div className="text-[11px] text-slate-400">Sign in with your personal or school Gmail</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Google Footer Disclaimer */}
-            <p className="text-[11px] text-slate-400 text-center leading-relaxed px-4">
-              To continue, Google will share your name, email address, and language preference with InsightForge AI.
-            </p>
-          </div>
-        )}
-
-        {/* VIEW 3: ENTER CUSTOM GMAIL / GOOGLE ACCOUNT */}
-        {modalView === 'google_custom' && (
-          <div className="p-6 space-y-6">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setModalView('google_chooser')}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>Back to Accounts</span>
-              </button>
-
-              <button
-                onClick={closeAuthModal}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="text-center space-y-1.5">
-              <div className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center mx-auto">
-                <GoogleIcon className="w-5 h-5" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 font-sans">
-                Sign in with your Google Account
-              </h3>
-              <p className="text-xs text-slate-500">
-                Enter your Gmail or Google Workspace address
-              </p>
-            </div>
-
-            {errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCustomGoogleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Google Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                  <input
-                    type="email"
-                    value={customGoogleEmail}
-                    onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                    placeholder="you@gmail.com"
-                    required
-                    autoFocus
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Display Name (Optional)
-                </label>
-                <div className="relative">
-                  <UserIcon className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                  <input
-                    type="text"
-                    value={customGoogleName}
-                    onChange={(e) => setCustomGoogleName(e.target.value)}
-                    placeholder="e.g. John Doe"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading || !customGoogleEmail.trim()}
-                className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Signing in with Google...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Continue with this Account</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* VIEW 5: FORGOT & RESET PASSWORD */}
-        {modalView === 'forgot_password' && (
-          <div className="p-6 space-y-6">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage(null);
-                  setInfoMessage(null);
-                  setModalView('form');
-                }}
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>Back to Sign In</span>
-              </button>
-
-              <button
-                onClick={closeAuthModal}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center mx-auto text-indigo-600 dark:text-indigo-400 shadow-xs">
-                <Lock className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-sans">
-                Reset Your Password
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed px-2">
-                {forgotStep === 'request'
-                  ? 'Enter your registered email to receive a 6-digit verification code.'
-                  : `Enter the 6-digit code sent to ${forgotEmail} and choose a new password.`}
-              </p>
-            </div>
-
-            {errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-            {infoMessage && !errorMessage && (
-              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-200 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-indigo-600" />
-                <span>{infoMessage}</span>
-              </div>
-            )}
-
-            {forgotStep === 'request' ? (
-              <form onSubmit={handleRequestPasswordReset} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Registered Email Address
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                    <input
-                      type="email"
-                      value={forgotEmail || email}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="name@company.com"
-                      required
-                      autoFocus
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading || !(forgotEmail || email).trim()}
-                  className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Sending reset code...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mail className="w-4 h-4" />
-                      <span>Send 6-Digit Reset Code</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 text-center">
-                    6-Digit Verification Code
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={forgotOtp}
-                    onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
-                    placeholder="000000"
-                    autoFocus
-                    required
-                    className="w-full text-center text-2xl font-mono tracking-[0.3em] font-bold py-2.5 bg-slate-50 dark:bg-slate-800 border-2 border-indigo-200 dark:border-indigo-800 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/10"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    New Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                    <input
-                      type={showNewPassword ? 'text' : 'password'}
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="At least 6 characters"
-                      required
-                      className="w-full pl-10 pr-10 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                    >
-                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Confirm New Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                    <input
-                      type={showNewPassword ? 'text' : 'password'}
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      placeholder="Repeat new password"
-                      required
-                      className="w-full pl-10 pr-10 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs md:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading || forgotOtp.length < 6 || newPassword.length < 6}
-                  className="w-full py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-md shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Updating password...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Reset Password & Log In</span>
-                    </>
-                  )}
-                </button>
-
-                <div className="text-center pt-1">
-                  <button
-                    type="button"
-                    onClick={handleRequestPasswordReset}
-                    disabled={isLoading}
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-                  >
-                    Didn't receive code? Resend code
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* VIEW 4: EMAIL OTP VERIFICATION (Routing after entering details) */}
+        {/* VIEW 2: EMAIL OTP VERIFICATION */}
         {modalView === 'otp_verify' && (
           <div className="p-6 space-y-6">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
@@ -1272,7 +757,9 @@ export const AuthModal: React.FC = () => {
               </button>
 
               <button
+                type="button"
                 onClick={closeAuthModal}
+                aria-label="Close modal"
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
@@ -1287,13 +774,13 @@ export const AuthModal: React.FC = () => {
                 Verify Your Email
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed px-2">
-                We sent a 6-digit verification code to<br />
+                We generated a 6-digit verification code for<br />
                 <strong className="text-slate-800 dark:text-slate-200 font-semibold">{otpSentToEmail}</strong>
               </p>
             </div>
 
             {errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2" role="alert">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
                 <span>{errorMessage}</span>
               </div>
@@ -1306,13 +793,28 @@ export const AuthModal: React.FC = () => {
               </div>
             )}
 
+            {devOtp && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between">
+                <span className="font-semibold">Local Dev OTP (no SMTP):</span>
+                <code className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900 font-mono text-sm font-bold tracking-widest">
+                  {devOtp}
+                </code>
+              </div>
+            )}
+
             <form onSubmit={handleVerifyOtp} className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 text-center">
+                <label htmlFor="auth-otp-code" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 text-center">
                   Enter 6-Digit Verification Code
                 </label>
                 <input
+                  id="auth-otp-code"
                   type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   maxLength={6}
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
@@ -1336,13 +838,13 @@ export const AuthModal: React.FC = () => {
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Verify & Complete Registration</span>
+                    <span>Verify &amp; Continue</span>
                   </>
                 )}
               </button>
 
               <div className="flex items-center justify-between pt-2 text-xs text-slate-400">
-                <span>Didn't receive the email?</span>
+                <span>Didn&apos;t receive the code?</span>
                 <button
                   type="button"
                   onClick={handleResendOtp}
@@ -1357,7 +859,7 @@ export const AuthModal: React.FC = () => {
           </div>
         )}
 
-        {/* VIEW 5: FORGOT & RESET PASSWORD */}
+        {/* VIEW 3: FORGOT & RESET PASSWORD (SINGLE INSTANCE) */}
         {modalView === 'forgot_password' && (
           <div className="p-6 space-y-6">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
@@ -1366,6 +868,7 @@ export const AuthModal: React.FC = () => {
                 onClick={() => {
                   setErrorMessage(null);
                   setInfoMessage(null);
+                  setDevOtp(null);
                   setModalView('form');
                 }}
                 className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition cursor-pointer"
@@ -1375,7 +878,9 @@ export const AuthModal: React.FC = () => {
               </button>
 
               <button
+                type="button"
                 onClick={closeAuthModal}
+                aria-label="Close modal"
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
@@ -1397,7 +902,7 @@ export const AuthModal: React.FC = () => {
             </div>
 
             {errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2" role="alert">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
                 <span>{errorMessage}</span>
               </div>
@@ -1410,16 +915,30 @@ export const AuthModal: React.FC = () => {
               </div>
             )}
 
+            {devOtp && forgotStep === 'reset' && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between">
+                <span className="font-semibold">Local Dev Reset OTP:</span>
+                <code className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900 font-mono text-sm font-bold tracking-widest">
+                  {devOtp}
+                </code>
+              </div>
+            )}
+
             {forgotStep === 'request' ? (
               <form onSubmit={handleRequestPasswordReset} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                  <label htmlFor="forgot-email-input" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                     Registered Email Address
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                     <input
+                      id="forgot-email-input"
                       type="email"
+                      autoComplete="email"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
                       value={forgotEmail || email}
                       onChange={(e) => setForgotEmail(e.target.value)}
                       placeholder="name@company.com"
@@ -1452,11 +971,17 @@ export const AuthModal: React.FC = () => {
             ) : (
               <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 text-center">
+                  <label htmlFor="forgot-otp-code" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 text-center">
                     6-Digit Verification Code
                   </label>
                   <input
+                    id="forgot-otp-code"
                     type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     maxLength={6}
                     value={forgotOtp}
                     onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
@@ -1468,13 +993,15 @@ export const AuthModal: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="forgot-new-pw" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     New Password
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                     <input
+                      id="forgot-new-pw"
                       type={showNewPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="At least 6 characters"
@@ -1484,6 +1011,8 @@ export const AuthModal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
+                      aria-pressed={showNewPassword}
+                      aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
                       className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                     >
                       {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1492,13 +1021,15 @@ export const AuthModal: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label htmlFor="forgot-confirm-pw" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Confirm New Password
                   </label>
                   <div className="relative">
                     <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
                     <input
+                      id="forgot-confirm-pw"
                       type={showNewPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={confirmNewPassword}
                       onChange={(e) => setConfirmNewPassword(e.target.value)}
                       placeholder="Repeat new password"
@@ -1521,7 +1052,7 @@ export const AuthModal: React.FC = () => {
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Reset Password & Log In</span>
+                      <span>Reset Password &amp; Log In</span>
                     </>
                   )}
                 </button>
@@ -1533,7 +1064,7 @@ export const AuthModal: React.FC = () => {
                     disabled={isLoading}
                     className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                   >
-                    Didn't receive code? Resend code
+                    Didn&apos;t receive code? Resend code
                   </button>
                 </div>
               </form>

@@ -2,7 +2,7 @@ name: Keep Backend Warm
 
 on:
   schedule:
-    # Runs every 12 minutes to keep the Render free-tier instance warm and prevent the 15-minute inactivity sleep
+    # Runs every 12 minutes to keep the cloud backend warm
     - cron: '*/12 * * * *'
   workflow_dispatch:
 
@@ -13,5 +13,5 @@ jobs:
     steps:
       - name: Send keep-alive ping
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 "https://insightforge-backend-99g3.onrender.com/api/health")
-          echo "Render Backend Health Status: $response"
+          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 "https://insightforge-backend-production.up.railway.app/api/health")
+          echo "Railway Backend Health Status: $response"

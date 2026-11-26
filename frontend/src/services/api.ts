@@ -1,5 +1,6 @@
 import {
   DocumentMetadata,
+  DocumentPreview,
   ChatRequest,
   ChatResponse,
   ResearchRequest,
@@ -14,16 +15,32 @@ import {
   Project,
   ProjectThread,
   User,
-  AuthResponse
+  AuthResponse,
+  OtpSendResponse
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+export function getGuestSessionId(): string {
+  const key = 'insightforge_guest_session_id';
+  let gid = sessionStorage.getItem(key);
+  if (!gid) {
+    const rand = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+      : Math.random().toString(36).slice(2, 14);
+    gid = `g_${rand}`;
+    sessionStorage.setItem(key, gid);
+  }
+  return gid;
+}
 
 async function authFetch(url: string, init?: RequestInit): Promise<Response> {
   const token = localStorage.getItem('insightforge_auth_token');
   const headers = new Headers(init?.headers || {});
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`);
+  } else if (!token) {
+    headers.set('X-Guest-Session-Id', getGuestSessionId());
   }
   try {
     return await fetch(url, {
@@ -96,6 +113,30 @@ export const api = {
 
   getDocumentFileUrl(documentId: string): string {
     return `${API_BASE}/documents/${documentId}/file`;
+  },
+
+  async getDocumentPreview(documentId: string): Promise<DocumentPreview> {
+    const res = await authFetch(`${API_BASE}/documents/${documentId}/preview`);
+    return handleResponse<DocumentPreview>(res);
+  },
+
+  async fetchDocumentBlob(documentId: string): Promise<{ blob: Blob; contentType: string }> {
+    const res = await authFetch(`${API_BASE}/documents/${documentId}/file`);
+    if (!res.ok) {
+      let msg = `Failed to load file (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err.detail) msg = String(err.detail);
+      } catch {
+        // ignore
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    return {
+      blob,
+      contentType: res.headers.get('content-type') || blob.type || 'application/octet-stream',
+    };
   },
 
   async compareDocuments(docId1: string, docId2: string): Promise<{ success: boolean; data: any }> {
@@ -303,7 +344,7 @@ export const api = {
     return handleResponse(res);
   },
 
-  // Authentication (Google & Local)
+  // Authentication
   async signUp(payload: { name: string; email: string; password: string }): Promise<AuthResponse> {
     const res = await authFetch(`${API_BASE}/auth/signup`, {
       method: 'POST',
@@ -373,13 +414,13 @@ export const api = {
   },
 
   // OTP Email Verification
-  async sendOtp(payload: { email: string; name?: string; purpose?: string }): Promise<{ success: boolean; message: string }> {
+  async sendOtp(payload: { email: string; name?: string; purpose?: string }): Promise<OtpSendResponse> {
     const res = await authFetch(`${API_BASE}/auth/send-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return handleResponse(res);
+    return handleResponse<OtpSendResponse>(res);
   },
 
   async verifyOtp(payload: { email: string; otp: string; name?: string; password?: string }): Promise<AuthResponse> {
@@ -391,22 +432,22 @@ export const api = {
     return handleResponse<AuthResponse>(res);
   },
 
-  async resendOtp(payload: { email: string; name?: string }): Promise<{ success: boolean; message: string }> {
+  async resendOtp(payload: { email: string; name?: string }): Promise<OtpSendResponse> {
     const res = await authFetch(`${API_BASE}/auth/resend-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return handleResponse(res);
+    return handleResponse<OtpSendResponse>(res);
   },
 
-  async forgotPassword(payload: { email: string }): Promise<{ success: boolean; message: string }> {
+  async forgotPassword(payload: { email: string }): Promise<OtpSendResponse> {
     const res = await authFetch(`${API_BASE}/auth/forgot-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return handleResponse(res);
+    return handleResponse<OtpSendResponse>(res);
   },
 
   async resetPassword(payload: { email: string; otp: string; new_password: string }): Promise<AuthResponse> {
@@ -418,4 +459,3 @@ export const api = {
     return handleResponse<AuthResponse>(res);
   },
 };
-

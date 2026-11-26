@@ -1,35 +1,62 @@
-from typing import List, Optional
+import mimetypes
 from pathlib import Path
-from pydantic import BaseModel
+from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from backend.app.api.routes_auth import get_effective_owner_id
+from backend.app.core.config import settings
+from backend.app.core.logger import logger
 from backend.app.schemas.document import (
     DocumentMetadata,
     DocumentUploadResponse,
     DocumentListResponse
 )
-from backend.app.services.document_service import document_service
-from backend.app.api.routes_auth import get_current_user_optional
-from backend.app.schemas.auth import User
-from backend.app.core.config import settings
-from backend.app.core.logger import logger
+from backend.app.services.document_service import document_service, SHARED_USER_ID
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
+MIME_TYPES_BY_EXT = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".xml": "application/xml",
+    ".rtf": "application/rtf",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+
 class UrlIngestRequest(BaseModel):
     url: str
+
 
 class DocumentCompareRequest(BaseModel):
     doc_id_1: str
     doc_id_2: str
 
+
 @router.post("/url", response_model=DocumentUploadResponse)
 async def ingest_url(
     request: UrlIngestRequest,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
     """
-    Ingest and index a live web page URL into ChromaDB.
+    Safely scrape and index a public webpage URL into ChromaDB.
     """
     if not request.url.startswith("http://") and not request.url.startswith("https://"):
         raise HTTPException(
@@ -37,13 +64,16 @@ async def ingest_url(
             detail="URL must start with http:// or https://"
         )
     try:
-        user_id = current_user.id if current_user else None
-        doc_meta = document_service.upload_url(request.url, user_id=user_id)
+        doc_meta = await run_in_threadpool(document_service.upload_url, request.url, owner_id)
         return DocumentUploadResponse(
             success=True,
             document=doc_meta,
             message=f"Webpage '{request.url}' successfully scraped and indexed ({doc_meta.total_chunks} chunks)."
         )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"URL ingest failed for {request.url}: {e}")
         raise HTTPException(
@@ -51,67 +81,66 @@ async def ingest_url(
             detail=f"Failed to scrape & index URL: {str(e)}"
         )
 
+
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
     """
-    Upload and index a document (PDF, DOCX, TXT, MD, CSV) into ChromaDB.
+    Upload and index a document across all supported formats into ChromaDB.
     """
-    ext = Path(file.filename).suffix.lower()
-    if ext not in settings.ALLOWED_EXTENSIONS:
+    filename = file.filename or ""
+    ext = Path(filename).suffix.lower()
+    if not ext or ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported format '{ext}'. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}"
+            detail=f"Unsupported format '{ext or '(none)'}'. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}"
         )
 
     try:
         content = await file.read()
-        user_id = current_user.id if current_user else None
-        doc_meta = document_service.upload_document(
-            file_bytes=content,
-            original_filename=file.filename,
-            user_id=user_id
+        doc_meta = await run_in_threadpool(
+            document_service.upload_document,
+            content,
+            filename,
+            owner_id
         )
         return DocumentUploadResponse(
             success=True,
             document=doc_meta,
-            message=f"Document '{file.filename}' processed and indexed successfully."
+            message=f"Document '{filename}' processed and indexed successfully."
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Upload failed for {file.filename}: {e}")
+        logger.error(f"Upload failed for {filename}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process document: {str(e)}"
         )
 
+
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(
-    current_user: Optional[User] = Depends(get_current_user_optional)
-):
+async def list_documents(owner_id: str = Depends(get_effective_owner_id)):
     """
-    List all uploaded and indexed documents.
+    List all documents accessible to this authenticated user or isolated guest session.
     """
-    user_id = current_user.id if current_user else None
-    docs = document_service.list_documents(user_id=user_id)
+    docs = await run_in_threadpool(document_service.list_documents, owner_id)
     return DocumentListResponse(
         documents=docs,
         total_count=len(docs)
     )
 
+
 @router.get("/{document_id}", response_model=DocumentMetadata)
 async def get_document(
     document_id: str,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
-    """
-    Get detailed metadata for a specific document.
-    """
-    user_id = current_user.id if current_user else None
-    doc = document_service.get_document(document_id, user_id=user_id)
+    doc = await run_in_threadpool(document_service.get_document, document_id, owner_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -119,16 +148,34 @@ async def get_document(
         )
     return doc
 
+
+@router.get("/{document_id}/preview")
+async def get_document_preview(
+    document_id: str,
+    owner_id: str = Depends(get_effective_owner_id)
+):
+    """
+    Returns extracted page/slide/sheet/structured text sections for inline previewing
+    of any supported document format or scraped URL.
+    """
+    preview = await run_in_threadpool(document_service.get_document_preview, document_id, owner_id)
+    if not preview:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Preview for document '{document_id}' not found or access denied."
+        )
+    return preview
+
+
 @router.get("/{document_id}/file")
 async def get_document_file(
     document_id: str,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
     """
-    Serve raw document file for browser inline viewing (e.g. split-screen PDF viewer).
+    Serve raw document file for browser inline viewing or download with strict MIME typing.
     """
-    user_id = current_user.id if current_user else None
-    file_path = document_service.get_document_file_path(document_id, user_id=user_id)
+    file_path = await run_in_threadpool(document_service.get_document_file_path, document_id, owner_id)
     if not file_path or not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -136,7 +183,8 @@ async def get_document_file(
         )
 
     ext = file_path.suffix.lower()
-    media_type = "application/pdf" if ext == ".pdf" else "text/plain"
+    guessed, _ = mimetypes.guess_type(str(file_path))
+    media_type = MIME_TYPES_BY_EXT.get(ext) or guessed or "application/octet-stream"
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
@@ -144,38 +192,40 @@ async def get_document_file(
         content_disposition_type="inline"
     )
 
+
 @router.delete("/guest/clear")
-async def clear_guest_documents():
+async def clear_guest_documents(owner_id: str = Depends(get_effective_owner_id)):
     """
-    Purge all temporary documents uploaded by guests.
+    Purges temporary documents uploaded by the caller's guest session.
     """
-    purged = document_service.clear_guest_data()
+    if not owner_id.startswith("guest_"):
+        return {"success": True, "purged_count": 0}
+    purged = await run_in_threadpool(document_service.clear_guest_data, owner_id)
     return {"success": True, "purged_count": purged}
+
 
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
     """
-    Delete a document and its embeddings from the vector store and Supabase Cloud.
+    Delete a document owned by the caller and purge its embeddings.
     """
-    user_id = current_user.id if current_user else None
-    doc = document_service.get_document(document_id, user_id=user_id)
+    doc = await run_in_threadpool(document_service.get_document, document_id, owner_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document '{document_id}' not found."
         )
 
-    # User isolation check
-    if current_user and doc.user_id and doc.user_id != current_user.id:
+    if doc.user_id == SHARED_USER_ID or doc.user_id != owner_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: You can only delete your own documents."
+            detail="Access denied: You can only delete your own uploaded documents."
         )
 
-    success = document_service.delete_document(document_id, user_id=user_id)
+    success = await run_in_threadpool(document_service.delete_document, document_id, owner_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -183,25 +233,34 @@ async def delete_document(
         )
     return {"success": True, "message": f"Document '{document_id}' deleted successfully."}
 
+
 @router.post("/compare")
 async def compare_documents(
     request: DocumentCompareRequest,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    owner_id: str = Depends(get_effective_owner_id)
 ):
     """
-    Perform deep AI comparison matrix between two uploaded documents.
+    Perform deep comparative matrix analysis between two accessible documents.
     """
     try:
-        user_id = current_user.id if current_user else None
-        doc1 = document_service.get_document(request.doc_id_1, user_id=user_id)
-        doc2 = document_service.get_document(request.doc_id_2, user_id=user_id)
+        doc1 = await run_in_threadpool(document_service.get_document, request.doc_id_1, owner_id)
+        doc2 = await run_in_threadpool(document_service.get_document, request.doc_id_2, owner_id)
         if not doc1 or not doc2:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="One or both documents not found or access denied."
             )
-        comparison = document_service.compare_documents(request.doc_id_1, request.doc_id_2)
+        comparison = await run_in_threadpool(
+            document_service.compare_documents,
+            request.doc_id_1,
+            request.doc_id_2,
+            owner_id
+        )
         return {"success": True, "data": comparison}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Document comparison failed: {e}")
         raise HTTPException(

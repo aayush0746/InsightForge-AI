@@ -3,17 +3,19 @@ import json
 import re
 from typing import Optional, Any, Dict, List
 from google import genai
+from google.genai import types
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 
+
 class GeminiClient:
     """
-    Thread-safe, robust wrapper around Google GenAI client.
-    Optimized for ultra-low latency, model quota resilience,
-    and automatic failover across active models.
+    Thread-safe wrapper around Google GenAI client with automatic model failover,
+    configurable temperature, and multimodal PDF/image extraction.
     """
     _instance: Optional["GeminiClient"] = None
     _client: Optional[genai.Client] = None
+    _configured_key: Optional[str] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -21,17 +23,37 @@ class GeminiClient:
             cls._instance._init_client()
         return cls._instance
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
+
     def _init_client(self):
-        if not settings.GEMINI_API_KEY:
-            logger.warning("GEMINI_API_KEY is not set. Gemini calls will fail.")
+        key = (settings.GEMINI_API_KEY or "").strip()
+        if not key:
+            logger.warning("GEMINI_API_KEY is not set. Running in Local Extractive fallback mode.")
             self._client = None
+            self._configured_key = None
             return
         try:
-            self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            self._client = genai.Client(api_key=key)
+            self._configured_key = key
             logger.info("Gemini Client initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize Gemini Client: {e}")
             self._client = None
+            self._configured_key = None
+
+    def _ensure_client(self) -> genai.Client:
+        key = (settings.GEMINI_API_KEY or "").strip()
+        if not key:
+            self._client = None
+            self._configured_key = None
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
+        if not self._client or self._configured_key != key:
+            self._init_client()
+        if not self._client:
+            raise RuntimeError("GEMINI_API_KEY not configured or client initialization failed.")
+        return self._client
 
     def generate(
         self,
@@ -39,30 +61,22 @@ class GeminiClient:
         model: Optional[str] = None,
         max_retries: int = 2,
     ) -> str:
-        """
-        Generate text response from Gemini with automatic multi-model failover.
-        Optimized for < 1 second response times.
-        """
-        if not self._client:
-            self._init_client()
-            if not self._client:
-                raise RuntimeError("GEMINI_API_KEY not configured or client initialization failed.")
-
-        # Candidate models to try in sequence: requested model first, then fallback list
+        client = self._ensure_client()
         target_model = model or settings.DEFAULT_GEMINI_MODEL
         candidates: List[str] = [target_model]
         for fb in settings.GEMINI_FALLBACK_MODELS:
             if fb not in candidates:
                 candidates.append(fb)
 
+        gen_config = types.GenerateContentConfig(temperature=settings.TEMPERATURE)
         last_error = None
         for candidate in candidates:
             for attempt in range(1, max_retries + 1):
                 try:
-                    # Direct generate_content call (fastest: ~0.6s)
-                    response = self._client.models.generate_content(
+                    response = client.models.generate_content(
                         model=candidate,
-                        contents=prompt
+                        contents=prompt,
+                        config=gen_config
                     )
                     if hasattr(response, "text") and response.text:
                         return response.text.strip()
@@ -72,20 +86,17 @@ class GeminiClient:
                 except Exception as e:
                     err_msg = str(e)
                     last_error = e
-                    # If model is deprecated (404), rate limited (429), or overloaded (503), immediately try next model
                     if any(code in err_msg for code in ["404", "429", "503", "NOT_FOUND", "RESOURCE_EXHAUSTED", "UNAVAILABLE"]):
                         logger.warning(f"Model '{candidate}' unavailable ({err_msg[:60]}...). Switching to fallback model...")
-                        break  # Break attempt loop and try next candidate immediately
-                    
+                        break
                     logger.warning(f"Model '{candidate}' attempt {attempt}/{max_retries} failed: {err_msg[:80]}")
                     if attempt < max_retries:
                         time.sleep(0.5)
 
-        # If all generate_content calls failed, try interactions.create as final rescue
         for candidate in candidates[:2]:
             try:
                 logger.info(f"Trying interactions.create fallback with {candidate}...")
-                resp = self._client.interactions.create(
+                resp = client.interactions.create(
                     model=candidate,
                     input=prompt
                 )
@@ -104,13 +115,7 @@ class GeminiClient:
         model: Optional[str] = None,
         max_retries: int = 2
     ) -> Dict[str, Any]:
-        """
-        Generates text and cleans JSON markdown wraps (e.g. ```json ... ```)
-        to safely parse the returned output into a Python dict.
-        """
         raw_text = self.generate(prompt=prompt, model=model, max_retries=max_retries)
-        
-        # Clean markdown codeblocks if model enclosed output in ```json
         cleaned = raw_text.strip()
         if cleaned.startswith("```"):
             cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
@@ -120,7 +125,6 @@ class GeminiClient:
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Attempt to extract first matching JSON object
             match = re.search(r"\{.*\}", cleaned, re.DOTALL)
             if match:
                 try:
@@ -135,16 +139,11 @@ class GeminiClient:
         Extracts full text, tables, and details from scanned or image-based PDFs
         using Gemini Multimodal Document Vision.
         """
-        if not self._client:
-            self._init_client()
-            if not self._client:
-                raise RuntimeError("GEMINI_API_KEY not configured.")
+        client = self._ensure_client()
+        logger.info(f"Uploading PDF to Gemini for multimodal OCR extraction: {pdf_path}")
+        uploaded_file = client.files.upload(file=pdf_path)
 
-        try:
-            logger.info(f"Uploading PDF to Gemini for multimodal OCR extraction: {pdf_path}")
-            uploaded_file = self._client.files.upload(file=pdf_path)
-            
-            prompt = """
+        prompt = """
 You are an expert multimodal document intelligence and OCR transcription system.
 Extract ALL readable text, including:
 - Handwritten notes, cursive writing, and student/doctor handwriting
@@ -153,20 +152,36 @@ Extract ALL readable text, including:
 Transcribe all handwritten words faithfully. Format the output clearly using structured markdown.
 Do not omit any sections, notes, or handwritten remarks.
 """
-            response = self._client.models.generate_content(
+        try:
+            response = client.models.generate_content(
                 model=settings.DEFAULT_GEMINI_MODEL,
                 contents=[uploaded_file, prompt]
             )
-
-            # Cleanup uploaded file from Gemini storage
+            return response.text.strip() if response.text else ""
+        finally:
             try:
-                self._client.files.delete(name=uploaded_file.name)
+                client.files.delete(name=uploaded_file.name)
             except Exception as del_err:
                 logger.warning(f"Failed to delete uploaded temp file from Gemini: {del_err}")
 
-            return response.text.strip() if response.text else ""
-        except Exception as e:
-            logger.error(f"Gemini multimodal extraction failed: {e}")
-            raise e
+    def extract_image_multimodal(self, image_bytes: bytes, mime_type: str, source_name: str = "image") -> str:
+        """
+        Transcribes text, tables, diagrams, and charts from image files (PNG, JPEG, WebP)
+        using Gemini Multimodal Vision.
+        """
+        client = self._ensure_client()
+        logger.info(f"Running Gemini multimodal image transcription for '{source_name}' ({mime_type})")
+        part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+        prompt = """
+You are an expert multimodal OCR and visual diagram analysis engine.
+Extract ALL visible text, labels, tables, numbers, charts, and structural details from this image.
+If the image shows a chart, diagram, receipt, or document scan, summarize its structure and transcribe every readable detail accurately in Markdown.
+"""
+        response = client.models.generate_content(
+            model=settings.DEFAULT_GEMINI_MODEL,
+            contents=[part, prompt]
+        )
+        return response.text.strip() if response.text else ""
+
 
 gemini_client = GeminiClient()

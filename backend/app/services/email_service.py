@@ -1,26 +1,36 @@
-import os
-import smtplib
+import hashlib
+import hmac
+import html
 import secrets
+import smtplib
+from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
+from backend.app.db.models import EmailOtpModel
+from backend.app.db.session import SessionLocal, init_db
+
 
 class EmailService:
     """
-    Email & OTP Verification Service:
+    SQL-backed Email & OTP Verification Service:
     - Generates cryptographically secure 6-digit verification codes.
-    - Sends styled verification emails via SMTP (e.g. Gmail SMTP or custom host).
-    - Logs OTP to console for instant local development & testing.
-    - Manages expiration and verification logic.
+    - Stores HMAC-SHA256 OTP hashes in SQL (email_otps) so multi-worker/restarts work.
+    - Sends styled, XSS-escaped HTML emails via SMTP when configured.
+    - Supports explicit local development mode fallback when SMTP is not configured.
     """
 
     def __init__(self):
-        # In-memory store: { email: { "otp": "...", "expires_at": datetime, "name": "...", "attempts": 0 } }
-        self._otp_store: Dict[str, Dict[str, Any]] = {}
+        init_db()
+
+    @staticmethod
+    def _hash_otp(email: str, otp_code: str) -> str:
+        secret = settings.SESSION_SECRET.encode("utf-8")
+        msg = f"{email.lower().strip()}:{otp_code.strip()}".encode("utf-8")
+        return hmac.new(secret, msg, hashlib.sha256).hexdigest()
 
     def generate_and_send_otp(
         self,
@@ -32,90 +42,133 @@ class EmailService:
         display_name = name.strip() if name else clean_email.split("@")[0].capitalize()
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(minutes=10)
-
-        # Generate secure 6-digit OTP code
         otp_code = str(secrets.randbelow(900000) + 100000)
+        otp_hash = self._hash_otp(clean_email, otp_code)
 
-        # Store in memory
-        self._otp_store[clean_email] = {
-            "otp": otp_code,
-            "name": display_name,
-            "purpose": purpose,
-            "expires_at": expires_at,
-            "attempts": 0,
-            "created_at": now
-        }
+        db = SessionLocal()
+        try:
+            existing = db.query(EmailOtpModel).filter(EmailOtpModel.email == clean_email).first()
+            if existing:
+                existing.otp_hash = otp_hash
+                existing.name = display_name[:120]
+                existing.purpose = purpose[:40]
+                existing.attempts = 0
+                existing.expires_at = expires_at
+                existing.created_at = now
+            else:
+                db.add(EmailOtpModel(
+                    email=clean_email,
+                    otp_hash=otp_hash,
+                    name=display_name[:120],
+                    purpose=purpose[:40],
+                    attempts=0,
+                    expires_at=expires_at,
+                    created_at=now,
+                ))
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to persist OTP record for {clean_email}: {e}")
+            raise ValueError("Unable to initialize verification code. Please try again.")
+        finally:
+            db.close()
 
-        # Always log OTP to server terminal for instant local developer debugging
-        border = "=" * 62
-        logger.info(
-            f"\n{border}\n"
-            f" [INSIGHTFORGE AUTH] EMAIL OTP CODE\n"
-            f" To       : {clean_email} ({display_name})\n"
-            f" Purpose  : {purpose.upper()}\n"
-            f" OTP Code : {otp_code}\n"
-            f" Validity : 10 minutes (Expires: {expires_at.strftime('%H:%M:%S UTC')})\n"
-            f"{border}"
-        )
+        is_prod = settings.APP_ENV.lower() == "production"
+        if not is_prod:
+            border = "=" * 62
+            logger.info(
+                f"\n{border}\n"
+                f" [INSIGHTFORGE AUTH] LOCAL DEV EMAIL OTP CODE\n"
+                f" To       : {clean_email} ({display_name})\n"
+                f" Purpose  : {purpose.upper()}\n"
+                f" OTP Code : {otp_code}\n"
+                f" Validity : 10 minutes (Expires: {expires_at.strftime('%H:%M:%S UTC')})\n"
+                f"{border}"
+            )
 
-        smtp_delivered = False
-        smtp_error_detail = None
-        # Send real verification email via SMTP
-        if settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD:
+        smtp_configured = bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD)
+        if smtp_configured:
             try:
                 self._send_smtp_email(
                     to_email=clean_email,
                     to_name=display_name,
-                    otp_code=otp_code
+                    otp_code=otp_code,
                 )
-                smtp_delivered = True
+                return {
+                    "success": True,
+                    "message": f"A 6-digit verification code has been sent to {clean_email}. Please check your inbox.",
+                    "smtp_delivered": True,
+                }
             except Exception as e:
-                smtp_error_detail = str(e)
                 logger.error(f"SMTP dispatch to {clean_email} failed: {e}")
-        else:
-            logger.warning(f"[InsightForge Auth] SMTP credentials not set. Host: '{settings.SMTP_HOST}', User: '{settings.SMTP_USER}'")
+                if is_prod:
+                    raise ValueError(
+                        f"Could not send verification email to {clean_email}. "
+                        "Please verify your email address or check back in a moment."
+                    )
+                logger.warning("SMTP failed in development mode; returning dev_otp fallback.")
+                return {
+                    "success": True,
+                    "message": f"SMTP unavailable in local dev mode. Use the verification code shown below for {clean_email}.",
+                    "smtp_delivered": False,
+                    "dev_otp": otp_code,
+                }
 
-        if not smtp_delivered:
-            logger.error(f"Failed to send email to {clean_email}. Detail: {smtp_error_detail}")
-            raise ValueError(
-                f"Could not send verification email to {clean_email}. "
-                "Please verify your email address or check back in a moment."
-            )
+        if is_prod:
+            logger.error("[InsightForge Auth] SMTP credentials missing in production.")
+            raise ValueError("Email verification service is not configured on this server.")
 
         return {
             "success": True,
-            "message": f"A 6-digit verification code has been sent to {clean_email}. Please check your inbox.",
-            "smtp_delivered": True
+            "message": f"Local development mode: 6-digit verification code generated for {clean_email}.",
+            "smtp_delivered": False,
+            "dev_otp": otp_code,
         }
 
     def verify_otp(self, email: str, user_otp: str) -> bool:
         """
-        Validates OTP code against the store with expiration check.
+        Validates OTP code against SQL-stored HMAC hash with expiration and attempt limits.
         """
         clean_email = email.lower().strip()
-        record = self._otp_store.get(clean_email)
-        if not record:
-            raise ValueError("No verification code found for this email. Please request a new code.")
+        db = SessionLocal()
+        try:
+            record = db.query(EmailOtpModel).filter(EmailOtpModel.email == clean_email).first()
+            if not record:
+                raise ValueError("No verification code found for this email. Please request a new code.")
 
-        now = datetime.now(timezone.utc)
-        if now > record["expires_at"]:
-            self._otp_store.pop(clean_email, None)
-            raise ValueError("Verification code has expired. Please request a new code.")
+            now = datetime.now(timezone.utc)
+            exp = record.expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
 
-        if record.get("attempts", 0) >= 5:
-            self._otp_store.pop(clean_email, None)
-            raise ValueError("Too many failed attempts. Please request a new verification code.")
+            if now > exp:
+                db.delete(record)
+                db.commit()
+                raise ValueError("Verification code has expired. Please request a new code.")
 
-        # Check code
-        if record["otp"].strip() != user_otp.strip():
-            record["attempts"] = record.get("attempts", 0) + 1
-            remaining = 5 - record["attempts"]
-            raise ValueError(f"Invalid verification code. {remaining} attempt(s) remaining.")
+            if (record.attempts or 0) >= 5:
+                db.delete(record)
+                db.commit()
+                raise ValueError("Too many failed attempts. Please request a new verification code.")
 
-        # Validated: Remove from store to prevent reuse
-        self._otp_store.pop(clean_email, None)
-        logger.info(f"OTP successfully verified for {clean_email}")
-        return True
+            expected_hash = record.otp_hash
+            candidate_hash = self._hash_otp(clean_email, user_otp)
+            if not hmac.compare_digest(expected_hash, candidate_hash):
+                record.attempts = (record.attempts or 0) + 1
+                remaining = 5 - record.attempts
+                if remaining <= 0:
+                    db.delete(record)
+                    db.commit()
+                    raise ValueError("Too many failed attempts. Please request a new verification code.")
+                db.commit()
+                raise ValueError(f"Invalid verification code. {remaining} attempt(s) remaining.")
+
+            db.delete(record)
+            db.commit()
+            logger.info(f"OTP successfully verified for {clean_email}")
+            return True
+        finally:
+            db.close()
 
     def _send_smtp_email(self, to_email: str, to_name: str, otp_code: str) -> bool:
         """
@@ -123,6 +176,8 @@ class EmailService:
         """
         from_email = settings.SMTP_FROM_EMAIL or settings.SMTP_USER
         from_name = settings.SMTP_FROM_NAME or "InsightForge AI"
+        safe_name = html.escape(to_name)
+        safe_otp = html.escape(otp_code)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"InsightForge AI verification OTP is {otp_code}"
@@ -132,7 +187,7 @@ class EmailService:
         text_content = (
             f"Hello {to_name},\n\n"
             f"InsightForge AI verification OTP is: {otp_code}\n\n"
-            f"Use this 6-digit verification code to complete your InsightForge AI registration.\n"
+            f"Use this 6-digit verification code to complete your InsightForge AI verification.\n"
             f"This code will expire in 10 minutes.\n\n"
             f"If you did not request this, please ignore this email."
         )
@@ -153,16 +208,16 @@ class EmailService:
         </head>
         <body>
           <div class="container">
-            <div class="logo">✨ InsightForge AI</div>
+            <div class="logo">InsightForge AI</div>
             <h2 style="color: #ffffff; margin-top: 0;">Verify Your Email Address</h2>
-            <p>Hello {to_name},</p>
-            <p>InsightForge AI verification OTP is:</p>
+            <p>Hello {safe_name},</p>
+            <p>Your InsightForge AI verification code is:</p>
             <div class="code-box">
-              <div class="otp-code">{otp_code}</div>
+              <div class="otp-code">{safe_otp}</div>
             </div>
-            <p style="color: #cbd5e1; font-size: 13px;">Use this 6-digit verification code to complete your registration. This code expires in <strong>10 minutes</strong>. Do not share this code with anyone.</p>
+            <p style="color: #cbd5e1; font-size: 13px;">Use this 6-digit verification code to complete your action. This code expires in <strong>10 minutes</strong>. Do not share this code with anyone.</p>
             <div class="footer">
-              If you didn't create an account with InsightForge AI, you can safely ignore this email.
+              If you didn't request this code, you can safely ignore this email.
             </div>
           </div>
         </body>
@@ -172,7 +227,6 @@ class EmailService:
         msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        # Connect to SMTP server
         smtp_password = settings.SMTP_PASSWORD.replace(" ", "") if settings.SMTP_PASSWORD else ""
         if settings.SMTP_PORT == 465:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
@@ -186,5 +240,5 @@ class EmailService:
         logger.info(f"Successfully sent OTP email to {to_email} via SMTP.")
         return True
 
-email_service = EmailService()
 
+email_service = EmailService()

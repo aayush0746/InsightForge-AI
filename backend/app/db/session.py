@@ -1,8 +1,7 @@
-import os
 import socket
 from urllib.parse import urlparse
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 from backend.app.db.models import Base
@@ -26,7 +25,6 @@ def create_db_engine():
     try:
         if DATABASE_URL.startswith("postgresql"):
             if is_db_reachable(DATABASE_URL, timeout=3.0):
-                # PostgreSQL host is reachable, connect
                 test_engine = create_engine(
                     DATABASE_URL,
                     pool_pre_ping=True,
@@ -42,7 +40,6 @@ def create_db_engine():
     except Exception as e:
         logger.warning(f"Could not connect to PostgreSQL ({e}). Falling back to SQLite local database.")
 
-    # SQLite fallback
     fallback_url = f"sqlite:///{settings.DATA_DIR / 'insightforge.db'}"
     sqlite_engine = create_engine(
         fallback_url,
@@ -54,16 +51,28 @@ def create_db_engine():
 engine, DB_DIALECT = create_db_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+ALL_TABLES = [
+    "users",
+    "user_sessions",
+    "email_otps",
+    "user_documents",
+    "user_chat_messages",
+    "projects",
+    "project_threads",
+    "research_reports",
+    "evaluation_runs",
+]
+
 def init_db():
     """
-    Creates all database tables (users, user_sessions) if they do not exist,
-    and secures them with Row Level Security (RLS) on PostgreSQL.
+    Creates all database tables if they do not exist,
+    and enforces Row Level Security (RLS) on PostgreSQL.
     """
     try:
         Base.metadata.create_all(bind=engine)
         logger.info(f"Database tables initialized successfully ({DB_DIALECT}).")
 
-        # Automatically ensure password_hash column exists on users table
+        # Ensure password_hash column exists on pre-existing users tables
         try:
             with engine.connect() as conn:
                 if DB_DIALECT == "postgresql":
@@ -77,41 +86,25 @@ def init_db():
         except Exception as col_err:
             logger.warning(f"Notice on ensuring password_hash column: {col_err}")
 
-        # Automatically enable Row Level Security & lockdown public PostgREST access on PostgreSQL (Supabase Best Practice)
         if DB_DIALECT == "postgresql":
             with engine.connect() as conn:
-                for tbl in ["users", "user_sessions", "user_documents", "user_chat_messages"]:
+                for tbl in ALL_TABLES:
                     conn.execute(text(f"ALTER TABLE public.{tbl} ENABLE ROW LEVEL SECURITY;"))
                     conn.execute(text(f"REVOKE ALL ON TABLE public.{tbl} FROM anon, authenticated;"))
-                
-                conn.execute(text("""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_policies WHERE tablename = 'users' AND policyname = 'service_role_access_users'
-                        ) THEN
-                            CREATE POLICY service_role_access_users ON public.users FOR ALL TO service_role USING (true) WITH CHECK (true);
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_policies WHERE tablename = 'user_sessions' AND policyname = 'service_role_access_sessions'
-                        ) THEN
-                            CREATE POLICY service_role_access_sessions ON public.user_sessions FOR ALL TO service_role USING (true) WITH CHECK (true);
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_policies WHERE tablename = 'user_documents' AND policyname = 'service_role_access_docs'
-                        ) THEN
-                            CREATE POLICY service_role_access_docs ON public.user_documents FOR ALL TO service_role USING (true) WITH CHECK (true);
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_policies WHERE tablename = 'user_chat_messages' AND policyname = 'service_role_access_chat'
-                        ) THEN
-                            CREATE POLICY service_role_access_chat ON public.user_chat_messages FOR ALL TO service_role USING (true) WITH CHECK (true);
-                        END IF;
-                    END
-                    $$;
-                """))
+                    policy_name = f"service_role_access_{tbl}"
+                    conn.execute(text(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_policies WHERE tablename = '{tbl}' AND policyname = '{policy_name}'
+                            ) THEN
+                                CREATE POLICY {policy_name} ON public.{tbl} FOR ALL TO service_role USING (true) WITH CHECK (true);
+                            END IF;
+                        END
+                        $$;
+                    """))
                 conn.commit()
-            logger.info("Row Level Security (RLS) and access protection enforced on all Supabase tables.")
+            logger.info("Row Level Security (RLS) and access protection enforced on all PostgreSQL tables.")
     except Exception as e:
         logger.error(f"Failed to initialize database tables: {e}")
 

@@ -6,6 +6,7 @@ from backend.app.core.logger import logger
 from backend.app.core.gemini import gemini_client
 from backend.app.rag.vector_store import vector_store
 
+
 class HybridSearchEngine:
     """
     Hybrid Search combining BM25 keyword matching and dense vector search
@@ -16,8 +17,18 @@ class HybridSearchEngine:
     def rewrite_query(original_query: str, history: Optional[List[Dict[str, str]]] = None) -> str:
         """
         Rewrites conversational or ambiguous queries into search-optimized terms.
-        Resolves follow-ups (e.g. 'Elaborate on point 2') using conversation context.
         """
+        if not gemini_client.is_configured:
+            if history:
+                # Lightweight offline follow-up enrichment using prior user turn
+                last_user = next(
+                    (h.get("content", "") for h in reversed(history) if h.get("role") == "user" and h.get("content")),
+                    ""
+                )
+                if last_user and len(original_query.split()) <= 10:
+                    return f"{last_user[:120]} {original_query}".strip()
+            return original_query
+
         history_str = ""
         if history:
             turns = []
@@ -27,7 +38,6 @@ class HybridSearchEngine:
             history_str = "CONVERSATION HISTORY:\n" + "\n".join(turns) + "\n\n"
 
         if len(original_query.split()) > 18 and not history_str:
-            # Already detailed
             return original_query
 
         prompt = f"""
@@ -65,44 +75,42 @@ Respond ONLY with the rewritten search query. Do not add quotes or explanations.
     ) -> List[Dict[str, Any]]:
         """
         Executes hybrid retrieval:
-        1. Query rewriting (if enabled or if history exists)
-        2. Semantic dense search (ChromaDB)
-        3. Lexical keyword search (BM25)
-        4. Reciprocal Rank Fusion (RRF) merging
+        1. Strict tenant document_ids guard (empty list returns [])
+        2. Query rewriting (if enabled or if history exists)
+        3. Semantic dense search (ChromaDB)
+        4. Lexical keyword search (BM25)
+        5. Reciprocal Rank Fusion (RRF) merging
         """
+        if document_ids is not None and len(document_ids) == 0:
+            return []
+
         if enable_query_rewrite or history:
             search_query = cls.rewrite_query(query, history=history)
         else:
             search_query = query
 
-        # 1. Semantic retrieval
         semantic_results = vector_store.search(
             query=search_query,
-            top_k=top_k * 2,  # retrieve extra candidates for fusion
+            top_k=top_k * 2,
             document_ids=document_ids
         )
 
-        # 2. Get all candidate chunks for BM25
         all_chunks = vector_store.get_all_chunks(document_ids=document_ids)
         if not all_chunks:
             return semantic_results[:top_k]
 
-        # Tokenize corpus for BM25
         tokenized_corpus = [cls.tokenize(c["text"]) for c in all_chunks]
         tokenized_query = cls.tokenize(search_query)
 
         bm25 = BM25Okapi(tokenized_corpus)
         bm25_scores = bm25.get_scores(tokenized_query)
 
-        # Map chunk_id to BM25 rank
         bm25_ranked = sorted(
             zip(all_chunks, bm25_scores),
             key=lambda x: x[1],
             reverse=True
         )[:top_k * 2]
 
-        # 3. Reciprocal Rank Fusion (RRF)
-        # score = 1 / (60 + rank_dense) + 1 / (60 + rank_bm25)
         rrf_constant = 60
         fused_scores: Dict[str, float] = {}
         chunks_by_id: Dict[str, Dict[str, Any]] = {}
@@ -120,9 +128,8 @@ Respond ONLY with the rewritten search query. Do not add quotes or explanations.
                 chunks_by_id[cid] = item
             fused_scores[cid] = fused_scores.get(cid, 0.0) + ((1.0 - alpha) * (1.0 / (rrf_constant + rank + 1)))
 
-        # Sort by fused score
         sorted_ids = sorted(fused_scores.keys(), key=lambda cid: fused_scores[cid], reverse=True)
-        
+
         final_candidates: List[Dict[str, Any]] = []
         for cid in sorted_ids[:top_k]:
             chunk = dict(chunks_by_id[cid])
@@ -132,5 +139,5 @@ Respond ONLY with the rewritten search query. Do not add quotes or explanations.
         logger.info(f"Hybrid search returned {len(final_candidates)} candidates for query: '{query[:40]}...'")
         return final_candidates
 
-hybrid_search = HybridSearchEngine()
 
+hybrid_search = HybridSearchEngine()

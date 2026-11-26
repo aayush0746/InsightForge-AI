@@ -170,9 +170,31 @@ export interface SystemHealth {
   gemini_api_configured: boolean;
   embedding_model: string;
   cross_encoder_model: string;
+  reranker_active?: boolean;
   chroma_db_status: string;
   total_indexed_documents: number;
   total_chunks: number;
+}
+
+export interface DocumentPreviewPage {
+  page: number;
+  text: string;
+}
+
+export interface DocumentPreview {
+  document_id: string;
+  filename: string;
+  ext: string;
+  total_pages: number;
+  total_chunks: number;
+  pages: DocumentPreviewPage[];
+}
+
+export interface OtpSendResponse {
+  success: boolean;
+  message: string;
+  smtp_delivered?: boolean;
+  dev_otp?: string;
 }
 
 export interface DocumentComparisonResult {

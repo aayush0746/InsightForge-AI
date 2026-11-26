@@ -8,6 +8,7 @@ from backend.app.rag.web_search import live_web_search
 from backend.app.schemas.research import AgentExecutionStep
 from backend.app.schemas.chat import Citation
 
+
 class ResearchAgent:
     """
     Research Agent: Executes multi-query retrieval across documents,
@@ -34,7 +35,6 @@ class ResearchAgent:
             if not query:
                 continue
 
-            # Hybrid retrieval
             subtask_candidates = hybrid_search.search(
                 query=query,
                 top_k=settings.DEFAULT_RETRIEVAL_TOP_K,
@@ -49,13 +49,12 @@ class ResearchAgent:
                     c_copy["associated_subtask"] = subtask.get("title")
                     candidate_pool.append(c_copy)
 
-        # Batch reranking in a single fast pass
-        primary_query = subtasks[0].get("search_query") if subtasks else ""
+        primary_query = main_question or (subtasks[0].get("search_query") if subtasks else "")
         if candidate_pool:
             top_chunks = reranker.rerank(
                 query=primary_query,
                 chunks=candidate_pool,
-                top_n=settings.DEFAULT_RERANK_TOP_N * len(subtasks)
+                top_n=settings.DEFAULT_RERANK_TOP_N * max(1, len(subtasks))
             )
         else:
             top_chunks = []
@@ -67,12 +66,12 @@ class ResearchAgent:
                     source_filename=chunk["source"],
                     page_number=chunk["page"],
                     chunk_id=chunk["chunk_id"],
+                    document_id=chunk.get("document_id"),
                     snippet=chunk["text"][:250] + ("..." if len(chunk["text"]) > 250 else ""),
-                    relevance_score=chunk.get("rerank_score") or chunk.get("score")
+                    relevance_score=chunk.get("rerank_score") if chunk.get("rerank_score") is not None else chunk.get("score")
                 )
             )
 
-        # Incorporate Live Web Search evidence if enabled
         if enable_web_search:
             search_target = main_question or primary_query
             web_ctx, web_citations = live_web_search.search(search_target, max_results=3)
@@ -105,5 +104,5 @@ class ResearchAgent:
             "step": step_log
         }
 
-research_agent = ResearchAgent()
 
+research_agent = ResearchAgent()

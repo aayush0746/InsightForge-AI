@@ -1,8 +1,11 @@
-from fastapi import APIRouter
-from backend.app.schemas.settings import SystemSettingsSchema
+from fastapi import APIRouter, Depends
+from backend.app.api.routes_auth import require_authenticated_user
 from backend.app.core.config import settings
+from backend.app.schemas.auth import User
+from backend.app.schemas.settings import SystemSettingsSchema
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
+
 
 @router.get("", response_model=SystemSettingsSchema)
 async def get_settings():
@@ -19,10 +22,14 @@ async def get_settings():
         hybrid_alpha=settings.DEFAULT_HYBRID_ALPHA
     )
 
+
 @router.post("", response_model=SystemSettingsSchema)
-async def update_settings(new_settings: SystemSettingsSchema):
+async def update_settings(
+    new_settings: SystemSettingsSchema,
+    current_user: User = Depends(require_authenticated_user)
+):
     """
-    Update runtime RAG tuning parameters.
+    Update runtime RAG tuning parameters (requires authenticated user).
     """
     settings.DEFAULT_GEMINI_MODEL = new_settings.model_name
     settings.TEMPERATURE = new_settings.temperature
@@ -33,4 +40,3 @@ async def update_settings(new_settings: SystemSettingsSchema):
     settings.DEFAULT_HYBRID_ALPHA = new_settings.hybrid_alpha
 
     return new_settings
-

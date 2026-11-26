@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { MetricCard } from '../components/MetricCard';
 import { api } from '../services/api';
-import { SystemHealth, ResearchReportSummary } from '../types';
+import { SystemHealth, ResearchReportSummary, SystemSettings } from '../types';
 
 interface DashboardProps {
   setCurrentTab: (tab: string) => void;
@@ -20,25 +20,38 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
   const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [sysSettings, setSysSettings] = useState<SystemSettings | null>(null);
   const [reports, setReports] = useState<ResearchReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [healthData, reportsData] = await Promise.all([
-          api.getHealth(),
-          api.listReports()
-        ]);
-        setHealth(healthData);
-        setReports(reportsData);
-      } catch (err) {
-        console.error('Failed to load dashboard data:', err);
-      } finally {
-        setLoading(false);
-      }
+  const loadData = async () => {
+    try {
+      const [healthData, reportsData, settingsData] = await Promise.all([
+        api.getHealth(),
+        api.listReports(),
+        api.getSettings()
+      ]);
+      setHealth(healthData);
+      setReports(reportsData);
+      setSysSettings(settingsData);
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     loadData();
+    const handleRefresh = () => loadData();
+    window.addEventListener('insightforge-auth-change', handleRefresh);
+    window.addEventListener('insightforge-docs-change', handleRefresh);
+    window.addEventListener('insightforge-settings-change', handleRefresh);
+    return () => {
+      window.removeEventListener('insightforge-auth-change', handleRefresh);
+      window.removeEventListener('insightforge-docs-change', handleRefresh);
+      window.removeEventListener('insightforge-settings-change', handleRefresh);
+    };
   }, []);
 
   const totalReports = reports.length;
@@ -130,23 +143,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <div>
                 <p className="font-medium text-slate-800 dark:text-slate-200">LLM Reasoning Engine</p>
-                <p className="text-slate-400 font-mono text-[11px] mt-0.5">Google Gemini 3.6 Flash</p>
+                <p className="text-slate-400 font-mono text-[11px] mt-0.5">
+                  {health?.gemini_api_configured
+                    ? (sysSettings?.model_name || 'gemini-2.5-flash')
+                    : 'Local Extractive Fallback (No API Key)'}
+                </p>
               </div>
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className={`w-4 h-4 ${health?.gemini_api_configured ? 'text-emerald-500' : 'text-amber-500'}`} />
             </div>
 
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <div>
                 <p className="font-medium text-slate-800 dark:text-slate-200">Neural Reranker</p>
-                <p className="text-slate-400 font-mono text-[11px] mt-0.5">ms-marco-MiniLM-L-6-v2</p>
+                <p className="text-slate-400 font-mono text-[11px] mt-0.5">
+                  {health?.cross_encoder_model || 'ms-marco-MiniLM-L-6-v2'} ({health?.reranker_active ? 'CrossEncoder' : 'Hybrid Fallback'})
+                </p>
               </div>
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className={`w-4 h-4 ${health?.reranker_active ? 'text-emerald-500' : 'text-amber-500'}`} />
             </div>
 
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 flex justify-between items-center">
               <div>
                 <p className="font-medium text-slate-800 dark:text-slate-200">Vector Embeddings</p>
-                <p className="text-slate-400 font-mono text-[11px] mt-0.5">all-MiniLM-L6-v2 (ChromaDB)</p>
+                <p className="text-slate-400 font-mono text-[11px] mt-0.5">
+                  {health?.embedding_model || 'all-MiniLM-L6-v2'} (ChromaDB)
+                </p>
               </div>
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
             </div>

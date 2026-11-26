@@ -61,20 +61,27 @@ Rules:
   const [activeRecord, setActiveRecord] = useState<EvaluationRunRecord | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadInitial() {
-      try {
-        const [tmpls, hist] = await Promise.all([
-          api.getTemplates(),
-          api.getEvaluationHistory()
-        ]);
-        setTemplates(tmpls);
-        setHistory(hist);
-      } catch (err) {
-        console.error('Failed to load evaluation metadata:', err);
-      }
+  const loadInitial = async () => {
+    try {
+      const [tmpls, hist] = await Promise.all([
+        api.getTemplates(),
+        api.getEvaluationHistory()
+      ]);
+      setTemplates(tmpls);
+      setHistory(hist);
+    } catch (err) {
+      console.error('Failed to load evaluation metadata:', err);
     }
+  };
+
+  useEffect(() => {
     loadInitial();
+    const handleAuthChange = () => {
+      setActiveRecord(null);
+      loadInitial();
+    };
+    window.addEventListener('insightforge-auth-change', handleAuthChange);
+    return () => window.removeEventListener('insightforge-auth-change', handleAuthChange);
   }, []);
 
   const handleRunEvaluation = async () => {

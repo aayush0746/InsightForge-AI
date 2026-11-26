@@ -1,24 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings as SettingsIcon,
   Save,
   CheckCircle2,
   Cpu,
   Database,
   Sliders,
-  Layers,
-  Sparkles,
-  Info
+  AlertCircle
 } from 'lucide-react';
 import { api } from '../services/api';
 import { SystemSettings, SystemHealth } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export const Settings: React.FC = () => {
+  const { isAuthenticated, openAuthModal } = useAuth();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchConfig() {
@@ -43,13 +43,21 @@ export const Settings: React.FC = () => {
     if (!settings) return;
     setIsSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
     try {
       const updated = await api.updateSettings(settings);
       setSettings(updated);
       setSaveSuccess(true);
+      window.dispatchEvent(new CustomEvent('insightforge-settings-change'));
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      alert('Failed to save settings');
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to save settings';
+      if (!isAuthenticated || msg.toLowerCase().includes('401') || msg.toLowerCase().includes('sign in')) {
+        setSaveError('Please sign in to modify runtime server configuration.');
+        openAuthModal('signin');
+      } else {
+        setSaveError(msg);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -263,6 +271,12 @@ export const Settings: React.FC = () => {
         )}
 
         {/* Save Bar */}
+        {saveError && (
+          <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2" role="alert">
+            <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+            <span>{saveError}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between pt-2">
           {saveSuccess && (
             <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-in fade-in">

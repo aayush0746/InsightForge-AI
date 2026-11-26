@@ -46,6 +46,13 @@ export const DocumentCompare: React.FC = () => {
 
   useEffect(() => {
     loadDocuments();
+    const handleSync = () => loadDocuments();
+    window.addEventListener('insightforge-auth-change', handleSync);
+    window.addEventListener('insightforge-docs-change', handleSync);
+    return () => {
+      window.removeEventListener('insightforge-auth-change', handleSync);
+      window.removeEventListener('insightforge-docs-change', handleSync);
+    };
   }, []);
 
   const loadDocuments = async () => {
@@ -73,6 +80,7 @@ export const DocumentCompare: React.FC = () => {
 
       const res = await api.uploadDocument(file);
       await loadDocuments();
+      window.dispatchEvent(new CustomEvent('insightforge-docs-change'));
 
       if (target === 'A') {
         setDoc1Id(res.document.document_id);
@@ -251,8 +259,9 @@ ${comparisonResult.risk_assessment}
               <input
                 ref={fileInputARef}
                 type="file"
-                className="hidden"
-                accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md"
+                className="visually-hidden"
+                aria-label="Upload Baseline File"
+                accept=".pdf,.docx,.pptx,.xlsx,.csv,.tsv,.txt,.md,.json,.html,.htm,.xml,.rtf,.yaml,.yml,.png,.jpg,.jpeg,.webp"
                 onChange={(e) => {
                   if (e.target.files?.[0]) handleFileUpload(e.target.files[0], 'A');
                 }}
@@ -330,8 +339,9 @@ ${comparisonResult.risk_assessment}
               <input
                 ref={fileInputBRef}
                 type="file"
-                className="hidden"
-                accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md"
+                className="visually-hidden"
+                aria-label="Upload Revision File"
+                accept=".pdf,.docx,.pptx,.xlsx,.csv,.tsv,.txt,.md,.json,.html,.htm,.xml,.rtf,.yaml,.yml,.png,.jpg,.jpeg,.webp"
                 onChange={(e) => {
                   if (e.target.files?.[0]) handleFileUpload(e.target.files[0], 'B');
                 }}

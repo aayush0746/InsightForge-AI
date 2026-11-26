@@ -128,11 +128,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         ) : (
           <button
+            type="button"
             onClick={() => openAuthModal('signin')}
             className="w-full flex items-center justify-center gap-2 p-2.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200/70 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-semibold transition cursor-pointer"
           >
-            <GoogleIcon className="w-4 h-4" />
-            <span>Sign in with Google</span>
+            <LogIn className="w-4 h-4" />
+            <span>Sign In / Sign Up</span>
           </button>
         )}
       </div>

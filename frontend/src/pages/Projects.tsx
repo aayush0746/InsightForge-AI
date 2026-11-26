@@ -69,6 +69,15 @@ export const Projects: React.FC = () => {
   // Active view tab in project: 'chat' | 'documents'
   const [projectTab, setProjectTab] = useState<'chat' | 'documents'>('chat');
 
+  // Native <dialog> delete confirmation state
+  const confirmDialogRef = useRef<HTMLDialogElement>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: 'project' | 'thread';
+    id: string;
+    projectId: string;
+    label: string;
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -238,6 +247,44 @@ export const Projects: React.FC = () => {
     }
   };
 
+  const requestDeleteConfirm = (target: {
+    kind: 'project' | 'thread';
+    id: string;
+    projectId: string;
+    label: string;
+  }) => {
+    setPendingDelete(target);
+    confirmDialogRef.current?.showModal();
+  };
+
+  const handleConfirmDialogClose = async () => {
+    const dialog = confirmDialogRef.current;
+    const returnValue = dialog?.returnValue || '';
+    if (dialog) dialog.returnValue = '';
+
+    const target = pendingDelete;
+    setPendingDelete(null);
+
+    if (returnValue !== 'confirm' || !target) return;
+
+    try {
+      setErrorMessage(null);
+      if (target.kind === 'project') {
+        await api.deleteProject(target.projectId);
+        await loadProjectsAndDocs();
+      } else {
+        await api.deleteThread(target.projectId, target.id);
+        const remaining = await api.listThreads(target.projectId);
+        setThreads(remaining);
+        if (activeThread?.id === target.id) {
+          setActiveThread(remaining[0] || null);
+        }
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || `Failed to delete ${target.kind}`);
+    }
+  };
+
   const projectDocs = allDocs.filter((d) => activeProject?.document_ids.includes(d.document_id));
   const unassignedDocs = allDocs.filter((d) => !activeProject?.document_ids.includes(d.document_id));
 
@@ -282,22 +329,42 @@ export const Projects: React.FC = () => {
           {projects.map((proj) => {
             const isSelected = activeProject?.id === proj.id;
             return (
-              <button
-                key={proj.id}
-                onClick={() => selectProject(proj)}
-                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition ${isSelected
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                  }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : 'bg-indigo-500'}`} />
-                  <span className="truncate">{proj.name}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[10px] opacity-80 shrink-0">
-                  <span>{proj.document_count} files</span>
-                </div>
-              </button>
+              <div key={proj.id} className="flex items-center gap-1 group">
+                <button
+                  type="button"
+                  onClick={() => selectProject(proj)}
+                  className={`flex-1 min-w-0 text-left px-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition ${isSelected
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                    }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-white' : 'bg-indigo-500'}`} />
+                    <span className="truncate">{proj.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[10px] opacity-80 shrink-0 ml-1">
+                    <span>{proj.document_count} files</span>
+                  </div>
+                </button>
+                {projects.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      requestDeleteConfirm({
+                        kind: 'project',
+                        id: proj.id,
+                        projectId: proj.id,
+                        label: proj.name,
+                      })
+                    }
+                    aria-label={`Delete project ${proj.name}`}
+                    title="Delete collection"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -326,19 +393,39 @@ export const Projects: React.FC = () => {
             threads.map((t) => {
               const isSelected = activeThread?.id === t.id;
               return (
-                <button
-                  key={t.id}
-                  onClick={() => selectThread(t)}
-                  className={`w-full text-left p-2.5 rounded-xl text-xs transition flex flex-col gap-1 ${isSelected
-                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-900 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 font-semibold'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent'
-                    }`}
-                >
-                  <p className="line-clamp-1 leading-snug">{t.title}</p>
-                  <span className="text-[10px] text-slate-400">
-                    {t.messages.length} messages • {new Date(t.updated_at).toLocaleDateString()}
-                  </span>
-                </button>
+                <div key={t.id} className="flex items-center gap-1 group">
+                  <button
+                    type="button"
+                    onClick={() => selectThread(t)}
+                    className={`flex-1 min-w-0 text-left p-2.5 rounded-xl text-xs transition flex flex-col gap-1 ${isSelected
+                        ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-900 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 font-semibold'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 border border-transparent'
+                      }`}
+                  >
+                    <p className="line-clamp-1 leading-snug">{t.title}</p>
+                    <span className="text-[10px] text-slate-400">
+                      {t.messages.length} messages • {new Date(t.updated_at).toLocaleDateString()}
+                    </span>
+                  </button>
+                  {activeProject && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        requestDeleteConfirm({
+                          kind: 'thread',
+                          id: t.id,
+                          projectId: activeProject.id,
+                          label: t.title,
+                        })
+                      }
+                      aria-label={`Delete thread ${t.title}`}
+                      title="Delete thread"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })
           )}
@@ -570,7 +657,7 @@ export const Projects: React.FC = () => {
                   value={inputQuery}
                   onChange={(e) => setInputQuery(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
                       handleSendMessage();
                     }
@@ -793,6 +880,42 @@ export const Projects: React.FC = () => {
           filename={viewerDoc.name}
         />
       )}
+
+      {/* Native <dialog> Confirmation Modal for Destructive Deletes */}
+      <dialog
+        ref={confirmDialogRef}
+        onClose={handleConfirmDialogClose}
+        aria-labelledby="confirm-delete-title"
+        className="w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-6 border border-slate-200 dark:border-slate-800 shadow-2xl text-slate-900 dark:text-slate-100"
+      >
+        <h1 id="confirm-delete-title" className="text-base font-bold text-slate-900 dark:text-slate-100">
+          Delete {pendingDelete?.kind === 'project' ? 'Workspace Collection' : 'Thread'}?
+        </h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+          Are you sure you want to permanently delete{' '}
+          <strong className="text-slate-800 dark:text-slate-200">{pendingDelete?.label}</strong>?
+          {pendingDelete?.kind === 'project'
+            ? ' All threads inside this collection will also be removed.'
+            : ' All messages in this thread will be removed.'}
+        </p>
+        <form method="dialog" className="flex justify-end gap-2 mt-6">
+          <button
+            type="submit"
+            value="cancel"
+            autoFocus
+            className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            value="confirm"
+            className="px-4 py-2 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition cursor-pointer"
+          >
+            Delete
+          </button>
+        </form>
+      </dialog>
     </div>
   );
 };

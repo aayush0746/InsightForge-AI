@@ -1,15 +1,49 @@
+import re
 import time
 from typing import Dict, Any, List, Optional
 from backend.app.core.gemini import gemini_client
 from backend.app.core.logger import logger
 from backend.app.schemas.research import AgentExecutionStep, FactCheckItem
 
+
 class FactCheckerAgent:
     """
-    Fact Checker Agent: Rigorously verifies every factual claim against
-    retrieved source documents to eliminate hallucinations, ensuring
-    strict attribution and computing an empirical grounding score.
+    Fact Checker Agent: Verifies factual claims against retrieved source
+    documents and computes an empirical grounding score.
     """
+
+    @staticmethod
+    def _local_verify(
+        key_findings: List[str],
+        evidence_chunks: List[Dict[str, Any]]
+    ) -> List[FactCheckItem]:
+        items: List[FactCheckItem] = []
+        stop_words = {"the", "and", "for", "with", "that", "this", "from", "are", "was", "were", "have", "page"}
+        for claim in key_findings:
+            clean_claim = re.sub(r"\[[^\]]+\]", "", claim).strip()
+            claim_tokens = {w for w in re.findall(r"\w+", clean_claim.lower()) if len(w) > 2 and w not in stop_words}
+            best_ratio = 0.0
+            best_cite = None
+            for ch in evidence_chunks:
+                ch_tokens = set(re.findall(r"\w+", str(ch.get("text", "")).lower()))
+                if not claim_tokens:
+                    continue
+                overlap = len(claim_tokens.intersection(ch_tokens)) / len(claim_tokens)
+                if overlap > best_ratio:
+                    best_ratio = overlap
+                    best_cite = f"{ch.get('source', 'Document')}, Page {ch.get('page', 1)}"
+
+            supported = best_ratio >= 0.5 and "no document evidence" not in claim.lower()
+            items.append(
+                FactCheckItem(
+                    claim=claim,
+                    is_supported=supported,
+                    confidence=round(min(0.99, max(0.2, best_ratio)), 2),
+                    source_citation=best_cite if supported else None,
+                    note="Token-verified directly against retrieved evidence chunks." if supported else "Insufficient lexical overlap with retrieved chunks."
+                )
+            )
+        return items
 
     def verify_claims(
         self,
@@ -33,14 +67,15 @@ class FactCheckerAgent:
                 )
             }
 
-        evidence_corpus = "\n\n".join([
-            f"Source [{c.get('source')}, Page {c.get('page')}]:\n{c.get('text')}"
-            for c in evidence_chunks
-        ])
+        fact_check_items: List[FactCheckItem] = []
+        if gemini_client.is_configured:
+            evidence_corpus = "\n\n".join([
+                f"Source [{c.get('source')}, Page {c.get('page')}]:\n{c.get('text')}"
+                for c in evidence_chunks
+            ])
+            claims_list = "\n".join([f"{i+1}. {claim}" for i, claim in enumerate(key_findings)])
 
-        claims_list = "\n".join([f"{i+1}. {claim}" for i, claim in enumerate(key_findings)])
-
-        prompt = f"""
+            prompt = f"""
 You are the Fact Checker Agent.
 Evaluate whether each stated claim is directly supported by the document evidence.
 
@@ -69,26 +104,27 @@ Return ONLY valid JSON matching this schema:
     ]
 }}
 """
-        result = gemini_client.generate_json(prompt, model=model)
-        items_data = result.get("items", [])
+            try:
+                result = gemini_client.generate_json(prompt, model=model)
+                for item in result.get("items", []):
+                    fact_check_items.append(
+                        FactCheckItem(
+                            claim=item.get("claim", ""),
+                            is_supported=bool(item.get("is_supported", False)),
+                            confidence=float(item.get("confidence", 0.5)),
+                            source_citation=item.get("source_citation"),
+                            note=item.get("note", "")
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"[Fact Checker Agent] Gemini failed ({e}); using local verification fallback.")
 
-        fact_check_items: List[FactCheckItem] = []
-        supported_count = 0
+        if not fact_check_items:
+            fact_check_items = self._local_verify(key_findings, evidence_chunks)
 
-        for item in items_data:
-            fc = FactCheckItem(
-                claim=item.get("claim", ""),
-                is_supported=bool(item.get("is_supported", False)),
-                confidence=float(item.get("confidence", 0.5)),
-                source_citation=item.get("source_citation"),
-                note=item.get("note", "")
-            )
-            fact_check_items.append(fc)
-            if fc.is_supported:
-                supported_count += 1
-
+        supported_count = sum(1 for fc in fact_check_items if fc.is_supported)
         total = len(fact_check_items)
-        grounding_score = round((supported_count / total * 100.0), 1) if total > 0 else 100.0
+        grounding_score = round((supported_count / total * 100.0), 1) if total > 0 else 0.0
 
         duration = round(time.time() - start_time, 2)
         step_log = AgentExecutionStep(
@@ -110,5 +146,5 @@ Return ONLY valid JSON matching this schema:
             "step": step_log
         }
 
-fact_checker_agent = FactCheckerAgent()
 
+fact_checker_agent = FactCheckerAgent()
